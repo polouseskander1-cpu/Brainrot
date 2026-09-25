@@ -71,6 +71,7 @@ class UploadQueue:
         self.approval_needed: Callable[[], bool] = lambda: False  # set by the phone approval feature
         self.on_waiting: Callable[[str, dict], None] = lambda key, item: None  # called for items waiting for approval
         self.on_posted: Callable[[dict], None] = lambda item: None
+        self.on_problem: Callable[[str, str], None] = lambda text, key: None  # e.g. a login that ran out
 
     @property
     def items(self) -> dict:
@@ -141,14 +142,24 @@ class UploadQueue:
 
     # ------------------------------------------------------------------ approval (phone)
 
-    def approve(self, video: str) -> int:
+    def approve(self, video: str, now: bool = False) -> int:
+        """OK from the phone: post at the next posting time, or right away (now)."""
         count = 0
         for item in self.items.values():
-            if item["video"] == video and item["status"] == "waiting":
+            if item["video"] == video and item["status"] in ("waiting", "pending"):
                 item["status"] = "pending"
+                item["now"] = now or item.get("now", False)
                 count += 1
         self.save()
         return count
+
+    @property
+    def paused(self) -> bool:
+        return bool(self.state.data.get("posting_paused"))
+
+    def pause(self, paused: bool = True) -> None:
+        self.state.data["posting_paused"] = paused
+        self.save()
 
     def skip(self, video: str) -> int:
         count = 0
@@ -188,6 +199,8 @@ class UploadQueue:
         """Post at most one reel per account, if that account is due. Returns how many were posted."""
         posted = 0
         now = time.time()
+        if self.paused:
+            return 0
         self.credentials.reload_if_changed()
         accounts = {item.get("account", item["platform"]) for item in self.items.values() if item["status"] == "pending"}
         for account in sorted(accounts):
@@ -200,9 +213,9 @@ class UploadQueue:
                     log.warning("%s: %s. Open Brainrot Bot > Connect accounts to log in again.", platform_name(account), self.blocked[account])
                     self._reminded[account] = now
                 continue
-            if not self.is_due(account, now):
-                continue
-            item = next((i for i in self.pending(account) if i["next_try"] <= now), None)
+            ready = [i for i in self.pending(account) if i["next_try"] <= now]
+            # "Now" from the phone skips the wait; everything else waits for the account's next posting time.
+            item = next((i for i in ready if i.get("now")), None) or (ready[0] if ready and self.is_due(account, now) else None)
             if item is None:
                 continue
             if self._post(account, item, should_stop):
@@ -249,6 +262,7 @@ class UploadQueue:
         if exc.relogin:
             self.blocked[account] = str(exc)
             log.error("%s: %s. Open Brainrot Bot > Connect accounts to log in again. Reels wait until then.", name, exc)
+            self.on_problem(f"{name}: {exc}. Log in again in the app (Connect accounts); reels wait until then.", f"relogin:{account}")
         elif exc.retry and item["attempts"] < MAX_ATTEMPTS:
             minutes = exc.wait_hours * 60 if exc.wait_hours else BACKOFF_MINUTES[item["attempts"] - 1]
             item["next_try"] = time.time() + minutes * 60

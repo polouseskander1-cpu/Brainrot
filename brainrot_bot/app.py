@@ -19,7 +19,7 @@ from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 from .report import stats_lines
 from .uploads import PLATFORMS, platform_name
-from .wizard import add_video_link, connect_ai, run_setup
+from .wizard import add_video_link, connect_ai, run_setup, setup_phone
 
 log = logging.getLogger("brainrot")
 
@@ -257,7 +257,10 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             ui.say(line)
         ui.say(ui.dim("-" * ui.WIDTH))
         failed = sum(1 for e in _load_state(cfg).get("clips", {}).values() if e.get("status") == "failed")
-        ai_on = bool(Credentials(cfg.paths.credentials).get(AI_KEY))
+        creds_now = Credentials(cfg.paths.credentials)
+        ai_on = bool(creds_now.get(AI_KEY))
+        phone_state = " + ".join(name for key, name in (("telegram", "Telegram"), ("discord", "Discord"))
+                                 if getattr(cfg.phone, key) and creds_now.get(key))
 
         def settings_changed() -> None:
             if running:
@@ -280,6 +283,14 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             run_setup(config_path)
             settings_changed()
 
+        def phone() -> None:
+            ui.banner("phone")
+            creds = Credentials(cfg.paths.credentials)
+            changes = setup_phone(cfg, creds, ask_first=False)
+            if changes:
+                update_config_file(config_path, {"phone": changes})
+            settings_changed()
+
         def toggle() -> None:
             if running:
                 restart(stop_only=True)
@@ -299,6 +310,7 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             ("Stats: views, likes, best podcasts and gameplay", lambda: _show_stats(cfg)),
             ("Connect accounts / auto-posting", accounts),
             ("AI helper (Claude): " + ("connected" if ai_on else "connect"), ai),
+            ("Phone (Telegram / Discord): " + (phone_state or "connect"), phone),
             ("Settings (run the setup again)", settings),
             ("Stop the bot" if running else "Start the bot", toggle),
         ]

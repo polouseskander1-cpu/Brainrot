@@ -131,6 +131,17 @@ dedupe:
   enabled: true         # skip videos that were already turned into reels (renamed copies, re-downloads, re-uploads)
   similarity: 0.7       # how alike two transcripts must be to count as the same video (0.3-1)
 
+phone:
+  # Get every new reel on your phone (Telegram or Discord), approve it with one tap, send links from anywhere.
+  # Connect in the menu (Phone). Commands: /status, /stats, /pause, /resume.
+  telegram: false
+  discord: false
+  approval: false       # true = a reel is only posted after you tap Post (or Now) on the phone
+  preview: true         # send a small preview video (otherwise the cover picture)
+  notify_posted: true   # a message with the link when a post goes live
+  notify_errors: true   # a message when something needs you (a clip failed, a login ran out)
+  link_folder: From phone  # Discord links without a folder name go here
+
 tools:
   # Only needed if ffmpeg isn't found automatically. Use single quotes, e.g. 'C:\ffmpeg\bin\ffmpeg.exe'
   ffmpeg: ''

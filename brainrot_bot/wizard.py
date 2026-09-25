@@ -13,6 +13,7 @@ from .ai import KEY_PAGE, check_key
 from .config import FROZEN, load_config, update_config_file
 from .credentials import Credentials
 from .links import add_link
+from .phone import DISCORD, TELEGRAM, Discord, PhoneError, Telegram
 from .uploads import PLATFORMS, UploadError, platform_name
 from .uploads import facebook, instagram, pinterest, tiktok, x, youtube
 from .uploads.accounts import account_id, set_folder_account, split_account, valid_name
@@ -20,7 +21,7 @@ from .uploads.accounts import account_id, set_folder_account, split_account, val
 log = logging.getLogger("brainrot")
 
 GUIDE = "https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md"
-TOTAL_STEPS = 5
+TOTAL_STEPS = 6
 
 
 def suggested_folders(cfg: SimpleNamespace) -> dict[str, Path]:
@@ -307,6 +308,99 @@ def connect_ai(cfg: SimpleNamespace, creds: Credentials) -> bool:
             return bool(saved)
 
 
+def connect_telegram(cfg: SimpleNamespace, creds: Credentials) -> bool:
+    _instructions([
+        "Telegram (free): the bot sends you each new reel with Post / Now / Skip buttons.",
+        "  1. In Telegram, open @BotFather and send /newbot",
+        "  2. Choose a name, then a username that ends in 'bot'",
+        "  3. BotFather answers with a token like 123456789:AAH... - copy it",
+    ])
+    while True:
+        token = ui.ask("Bot token (or 'skip')").strip()
+        if _skip(token):
+            return False
+        try:
+            username = Telegram.check_token(token)
+            break
+        except (PhoneError, UploadError) as exc:
+            ui.say(ui.red(f"  That didn't work: {exc}"))
+    ui.say(f"Now open  https://t.me/{username}  on your phone, press Start (or send any message).")
+    ui.say("Waiting up to 2 minutes...")
+    try:
+        chat = Telegram(token, "").wait_for_chat(120)
+    except (PhoneError, UploadError) as exc:
+        ui.say(ui.red(f"  Telegram problem: {exc}"))
+        return False
+    if not chat:
+        ui.say(ui.red("  No message arrived. Try again from the menu (Phone)."))
+        return False
+    bot = Telegram(token, chat)
+    creds.set(TELEGRAM, {"token": token, "chat_id": chat, "account": "@" + username})
+    try:
+        bot.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in (
+            ("status", "What the bot is doing"), ("stats", "Views, likes, best podcasts"),
+            ("pause", "Stop posting for now"), ("resume", "Post again"), ("help", "What I can do"))]})
+        bot.send_text("Connected! New reels will show up here. Send me a video link any time to make reels from it.")
+    except (PhoneError, UploadError):
+        pass
+    ui.say(ui.green(f"  Telegram connected (@{username})."))
+    return True
+
+
+def connect_discord(cfg: SimpleNamespace, creds: Credentials) -> bool:
+    _instructions([
+        "Discord: the bot posts each new reel in a channel; react to approve it.",
+        "  1. discord.com/developers/applications > New Application > Bot > Reset Token, copy the token",
+        "  2. Same page: switch on 'Message Content Intent' (so it can read the links you send)",
+        "  3. OAuth2 > URL Generator: scope 'bot'; permissions View Channels, Send Messages, Attach Files,",
+        "     Add Reactions, Read Message History. Open the link and add the bot to your server",
+        "  4. Discord settings > Advanced > Developer Mode on; right-click your channel > Copy Channel ID",
+    ])
+    token = ui.ask("Bot token (or 'skip')").strip()
+    if _skip(token):
+        return False
+    channel = ui.ask_required("Channel ID").strip()
+    owner = ui.ask("Your user ID, so only you can approve (right-click your name > Copy User ID; Enter to skip)").strip()
+    try:
+        bot_name, channel_name = Discord.check(token, channel)
+        Discord(token, channel, owner).send_text("Connected! New reels will show up here. Send a video link any time to make reels from it.")
+    except (PhoneError, UploadError) as exc:
+        ui.say(ui.red(f"  That didn't work: {exc}"))
+        return False
+    creds.set(DISCORD, {"token": token, "channel_id": channel, "owner_id": owner, "account": f"#{channel_name}"})
+    ui.say(ui.green(f"  Discord connected ({bot_name} in #{channel_name})."))
+    return True
+
+
+def setup_phone(cfg: SimpleNamespace, creds: Credentials, ask_first: bool = True) -> dict:
+    """Returns the phone settings to save."""
+    ui.say("Get every new reel on your phone, approve it with one tap, and send video links from anywhere.")
+    if ask_first and not (creds.get(TELEGRAM) or creds.get(DISCORD)):
+        if not ui.ask_yes_no("Connect your phone (Telegram or Discord)?", default=False):
+            return {}
+    settings = {"telegram": cfg.phone.telegram and bool(creds.get(TELEGRAM)), "discord": cfg.phone.discord and bool(creds.get(DISCORD))}
+    for key, name, connect in ((TELEGRAM, "Telegram", connect_telegram), (DISCORD, "Discord", connect_discord)):
+        saved = creds.get(key)
+        ui.say()
+        ui.say(ui.bold(f"> {name}"))
+        if saved:
+            choice = ui.choose([f"Keep ({saved.get('account', 'connected')})", "Connect again", "Turn off"], default=1)
+            if choice == 1:
+                settings[key] = True
+                continue
+            if choice == 3:
+                creds.remove(key)
+                settings[key] = False
+                continue
+        elif not ui.ask_yes_no(f"Use {name}?", default=key == TELEGRAM):
+            settings[key] = False
+            continue
+        settings[key] = connect(cfg, creds) or bool(creds.get(key))
+    if settings["telegram"] or settings["discord"]:
+        settings["approval"] = ui.ask_yes_no("Wait for your OK on the phone before posting each reel?", default=cfg.phone.approval)
+    return settings
+
+
 def add_video_link(cfg: SimpleNamespace) -> None:
     """Menu: paste a link, pick the folder (podcast / influencer) it belongs to."""
     ui.banner("add a video link")
@@ -374,7 +468,10 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     ui.step(4, TOTAL_STEPS, "AI helper (optional)")
     ai_on = connect_ai(cfg, creds)
 
-    ui.step(5, TOTAL_STEPS, "Your folders")
+    ui.step(5, TOTAL_STEPS, "Your phone (optional)")
+    phone = setup_phone(cfg, creds)
+
+    ui.step(6, TOTAL_STEPS, "Your folders")
     suggested = suggested_folders(cfg)
     gameplay = ui.ask_path("Folder for your GAMEPLAY videos", suggested["gameplay"])
     clips = ui.ask_path("Folder for your CLIPS (one subfolder per podcast / influencer)", suggested["clips"])
@@ -394,6 +491,7 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
         "app": {"run_mode": run_mode, "autostart": autostart, "setup_done": True},
         "upload": enabled,
         **({"ai": {"enabled": True}} if ai_on else {}),
+        **({"phone": phone} if phone else {}),
     })
     try:
         service.set_autostart(autostart, config=config_path)
@@ -417,6 +515,9 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     ui.say()
     ui.say("  Posting to: " + (", ".join(posting) if posting else "nowhere yet (reels are just saved)"))
     ui.say("  AI: " + ("Claude picks moments and writes hooks, captions and hashtags" if ai_on else "off (built-in rules)"))
+    phones = [name for key, name in (("telegram", "Telegram"), ("discord", "Discord")) if phone.get(key)]
+    if phones:
+        ui.say("  Phone: " + " and ".join(phones) + (" (each reel waits for your OK)" if phone.get("approval") else ""))
     ui.say("  Runs: " + ("24/7 in the background" if run_mode == "background" else "while the window is open")
            + (f", starts {delay}s after you log in" if autostart else ""))
     ui.say()

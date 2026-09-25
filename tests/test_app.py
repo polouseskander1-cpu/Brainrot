@@ -76,6 +76,7 @@ def test_first_setup_writes_everything(config, tmp_path, monkeypatch):
           "",             # start at login: default yes on first setup
           "n", "n", "n", "n", "n", "n",  # skip all six platforms
           "n",            # no AI
+          "n",            # no phone
           f'"{gameplay}"', str(clips), str(reels),  # quotes from "Copy as path" are fine
           "y")            # open the folders
     cfg = wizard.run_setup(config)

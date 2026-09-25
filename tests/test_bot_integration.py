@@ -346,3 +346,40 @@ def test_finished_reels_are_posted_with_their_details(workspace, monkeypatch):
     make_clip(workspace / "clips" / "show" / "ep2.mp4", 3, silent=(1, 2))
     assert new_bot(workspace).run_once() == 1
     assert posted[-1][:2] == ("ep2.mp4", "youtube:other")
+
+
+def test_reels_wait_for_your_ok_on_the_phone(workspace, monkeypatch):
+    from brainrot_bot.credentials import Credentials
+    from brainrot_bot.phone import Action
+    from brainrot_bot.uploads import Posted
+    from brainrot_bot.uploads import queue as queue_module
+
+    posted = []
+
+    class FakeTikTok:
+        KEY, NAME = "tiktok", "TikTok"
+
+        @staticmethod
+        def upload(video, post, cfg, store, should_stop, account="tiktok"):
+            posted.append(video.name)
+            return Posted("sent to your TikTok inbox")
+
+    monkeypatch.setitem(queue_module.PLATFORMS, "tiktok", FakeTikTok)
+    creds = Credentials(workspace / "credentials")
+    creds.set("tiktok", {"access_token": "t"})
+    creds.set("telegram", {"token": "t", "chat_id": "1"})
+    (workspace / "config.yaml").write_text(BASE_CONFIG + "upload:\n  tiktok: true\n  post_times: []\n  hours_between_posts: 0\n"
+                                           "phone:\n  telegram: true\n  approval: true\n  preview: false\n", encoding="utf-8")
+    bot = new_bot(workspace)
+    assert bot.phone.enabled and bot.phone.approval
+    assert bot.run_once() == 1
+    assert posted == []  # waiting for the OK
+    (item,) = bot.state.data["uploads"].values()
+    assert item["status"] == "waiting"
+    job = bot.phone.outbox.get_nowait()  # the preview message that would go to Telegram
+    assert job[0] == "reel" and "Waiting for your OK" in job[4] and job[5] is True
+
+    bot.phone.actions.put(Action("approve", video=item["video"]))
+    bot._phone_actions()
+    assert bot.uploads.run_due() == 1 and posted == ["ep1.mp4"]
+    assert "Waiting for your OK: 0" not in bot._status_text() and "Posted in the last 24 h: 1" in bot._status_text()

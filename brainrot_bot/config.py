@@ -161,6 +161,15 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "similarity": 0.7,
     },
+    "phone": {
+        "telegram": False,
+        "discord": False,
+        "approval": False,
+        "preview": True,
+        "notify_posted": True,
+        "notify_errors": True,
+        "link_folder": "From phone",
+    },
     "app": {
         "run_mode": "background",
         "autostart": False,
@@ -387,6 +396,11 @@ def _validate(c: dict) -> None:
     d = c["dedupe"]
     d["enabled"] = bool(d["enabled"])
     d["similarity"] = _num("dedupe.similarity", d["similarity"], 0.3, 1.0)
+
+    ph = c["phone"]
+    for key in ("telegram", "discord", "approval", "preview", "notify_posted", "notify_errors"):
+        ph[key] = bool(ph[key])
+    ph["link_folder"] = "".join(ch for ch in str(ph["link_folder"] or "") if ch not in '<>:"/\\|?*').strip() or "From phone"
 
     t = c["tools"]
     t["ffmpeg"] = str(t["ffmpeg"] or "").strip()

@@ -24,11 +24,13 @@ from .dedupe import Fingerprints, frame_hashes, quick_hash, sound_bits, text_sig
 from .editor import EditPlan, plan_edit
 from .faces import find_faces
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
-from .links import LinkQueue
+from .links import LinkQueue, add_link
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, MediaInfo, StopRequested, Tools, probe, run_ffmpeg
 from .moments import auto_count, find_moments, moments_from_picks, split_sentences, transcript_for_ai
 from .parts import plan_parts
+from .phone import Action, Phone
 from .render import Layout, RenderJob, build_command, compute_layout
+from .report import stats_lines
 from .sfx import write_track
 from .state import State
 from .thumbnail import make_cover
@@ -170,6 +172,16 @@ class Bot:
             self.uploads.blocked.clear()  # accounts may have been connected again since last time
         self.links = LinkQueue(cfg, self.state, tools, self._save) if persist else None
         self.fingerprints = Fingerprints(self.state, cfg.dedupe.similarity) if cfg.dedupe.enabled and persist else None
+        self.activity = "starting"
+        self.phone = Phone(cfg, self.credentials, tools, cfg.paths.state_file.with_name("phone_state.json"), WORK_DIR / "phone") if persist else None
+        if self.phone is not None and self.phone.enabled:
+            self.phone.status_provider = self._status_text
+            self.phone.stats_provider = self._stats_text
+            self.phone.folders_provider = self._clip_folders
+            if self.uploads is not None:
+                self.uploads.approval_needed = lambda: self.phone.approval
+                self.uploads.on_posted = self.phone.posted
+                self.uploads.on_problem = self.phone.problem
 
     def should_stop(self) -> bool:
         return self.stop_event.is_set() or STOP_FILE.exists()
@@ -177,7 +189,75 @@ class Bot:
     def _sleep(self, seconds: float) -> None:
         end = time.monotonic() + seconds
         while time.monotonic() < end and not self.should_stop():
+            self._phone_actions()
             time.sleep(min(0.5, max(0.0, end - time.monotonic())))
+
+    # ------------------------------------------------------------ the phone (Telegram / Discord)
+
+    def _phone_actions(self) -> None:
+        if self.phone is not None and self.phone.enabled:
+            self.phone.drain(self._do_phone_action)
+
+    def _do_phone_action(self, action: Action) -> None:
+        if action.kind in ("approve", "now", "skip") and self.uploads is not None:
+            if action.kind == "skip":
+                count = self.uploads.skip(action.video)
+                log.info("Phone: %s won't be posted (%d post(s) dropped).", Path(action.video).name, count)
+            else:
+                count = self.uploads.approve(action.video, now=action.kind == "now")
+                log.info("Phone: %s approved%s.", Path(action.video).name, ", posting now" if action.kind == "now" else "")
+        elif action.kind == "link":
+            folder = self.cfg.paths.clips / action.folder if action.folder else self.cfg.paths.clips
+            add_link(folder, action.url)
+            log.info("Phone: link added to %s", folder.name or folder)
+        elif action.kind in ("pause", "resume") and self.uploads is not None:
+            self.uploads.pause(action.kind == "pause")
+            log.info("Phone: posting %s.", "paused" if action.kind == "pause" else "resumed")
+
+    def _clip_folders(self) -> list[str]:
+        root = self.cfg.paths.clips
+        try:
+            return sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_", "~")))
+        except OSError:
+            return []
+
+    def _read_state(self) -> dict:
+        """A consistent copy of the saved state (for the phone thread; the bot keeps working meanwhile)."""
+        import json
+
+        try:
+            return json.loads(self.cfg.paths.state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _status_text(self) -> str:
+        from . import __version__
+
+        data = self._read_state()
+        uploads = data.get("uploads", {})
+        waiting = sum(1 for i in uploads.values() if i.get("status") == "waiting")
+        pending = sum(1 for i in uploads.values() if i.get("status") == "pending")
+        day_ago = time.time() - 86400
+        posted = sum(1 for i in uploads.values() if i.get("status") == "done" and float(i.get("posted", 0)) > day_ago)
+        clips = data.get("clips", {})
+        lines = [
+            f"Brainrot bot {__version__}: {self.activity}",
+            f"Clips done: {sum(1 for e in clips.values() if e.get('status') == 'done')}"
+            + (f", failed: {sum(1 for e in clips.values() if e.get('status') == 'failed')}" if any(e.get("status") == "failed" for e in clips.values()) else ""),
+            f"Posted in the last 24 h: {posted}",
+            f"Waiting to be posted: {pending}",
+        ]
+        if waiting:
+            lines.append(f"Waiting for your OK: {waiting}")
+        if data.get("posting_paused"):
+            lines.append("Posting is paused (/resume to post again).")
+        links = sum(1 for i in data.get("links", {}).values() if i.get("status") == "pending")
+        if links:
+            lines.append(f"Links to download: {links}")
+        return "\n".join(lines)
+
+    def _stats_text(self) -> str:
+        return "\n".join(stats_lines(self._read_state()))
 
     # ------------------------------------------------------------ watching
 
@@ -230,8 +310,20 @@ class Bot:
 
     def run_forever(self) -> None:
         log.info("Watching %s for new clips.", self.cfg.paths.clips)
+        if self.phone is not None:
+            self.phone.start()
+        try:
+            self._loop()
+        finally:
+            if self.phone is not None:
+                self.phone.stop()
+        log.info("Bot stopped.")
+
+    def _loop(self) -> None:
         while not self.should_stop():
+            self.activity = "watching for new clips"
             try:
+                self._phone_actions()
                 self._download_links()
                 ready, _ = self.scan()
                 for path in ready:
@@ -247,7 +339,6 @@ class Bot:
             except Exception:  # noqa: BLE001 - e.g. a folder that briefly can't be read; never stop the bot
                 log.exception("Unexpected problem, will keep going")
             self._sleep(self.cfg.watch.poll_seconds)
-        log.info("Bot stopped.")
 
     def run_once(self) -> int:
         """Download waiting links, process everything that is in the clips folder right now, then return."""
@@ -300,6 +391,7 @@ class Bot:
             return []
 
         log.info("New clip: %s", key)
+        self.activity = f"making reels from {key}"
         started = time.monotonic()
         try:
             rendered = self.make_reels(clip, gameplay)
@@ -320,6 +412,8 @@ class Bot:
             entry.update(attempts=attempts, error=str(exc)[-2000:], updated=time.strftime("%Y-%m-%d %H:%M:%S"))
             if attempts >= self.cfg.watch.max_attempts:
                 entry["status"] = "failed"
+                if self.phone is not None:
+                    self.phone.problem(f"Couldn't make a reel from {key}: {str(exc)[-300:]}", f"clip:{key}")
                 log.error(
                     "Giving up on %s after %d attempt(s): %s\n  Fix the problem, then re-save the file or run: python brainrot.py --retry-failed",
                     key, attempts, exc,
@@ -346,7 +440,11 @@ class Bot:
                 details = {"folder": folder, "clip": key, "gameplay": sorted({s.key for s in item.segments}), "language": item.language}
                 platforms = self.uploads.add(item.video, item.post, clip.parent, details)
                 if platforms:
-                    log.info("Queued %s for posting on %s", item.video.name, ", ".join(platforms))
+                    log.info("Queued %s for posting on %s%s", item.video.name, ", ".join(platforms),
+                             " (waiting for your OK on the phone)" if self.uploads.approval_needed() else "")
+                if self.phone is not None:
+                    self.phone.reel_ready(item.video, item.cover, item.post.title, folder, item.post.duration, platforms,
+                                          self.uploads.approval_needed() and bool(platforms))
         for name in ("error", "next_try", "same_as"):
             entry.pop(name, None)
         self.state.clips[key] = entry
