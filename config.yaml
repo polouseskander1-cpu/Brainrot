@@ -1,0 +1,84 @@
+# Brainrot bot settings. Every line is optional: delete one and the default is used.
+# Restart the bot after changing anything here.
+
+folders:
+  clips: clips          # make a subfolder in here for each podcast / video and drop the clips inside
+  gameplay: gameplay    # your gameplay recordings (Minecraft, parkour, Subway Surfers...). Picked at random.
+  music: music          # optional quiet background music. Leave the folder empty for none.
+  output: output        # finished reels appear here, in the same subfolders as the clips
+
+watch:
+  poll_seconds: 10      # how often to look for new clips
+  settle_seconds: 10    # a new file must stop changing for this long first (so half-copied files are never used)
+  max_attempts: 3       # a clip that keeps failing is skipped after this many tries
+  low_priority: true    # render at low CPU priority so your PC stays smooth
+
+video:
+  width: 1080           # 1080 x 1920 = vertical 9:16 (TikTok / Reels / Shorts)
+  height: 1920
+  fps: 30
+  top_ratio: 0.3333     # the clip gets the top third, the gameplay the bottom two thirds
+  snap_top: true        # if the clip almost fits the top area (16:9 clips do), size the area to fit it exactly
+  top_fill: blur        # what fills empty space around a clip that doesn't fill its area: blur or black
+  codec: libx264        # h264_nvenc (NVIDIA), h264_videotoolbox (Mac) or h264_qsv (Intel) render faster
+  crf: 19               # libx264 quality: lower = better quality, bigger file (18-23 is a good range)
+  preset: medium        # libx264 speed: faster / medium / slow
+  bitrate: 12M          # max bitrate for libx264 (keeps files uploadable), target bitrate for hardware codecs
+  audio_bitrate: 192k
+  extra_args: []        # extra ffmpeg output options, for experts
+
+gameplay:
+  skip_start: 0         # ignore the first N seconds of every recording (loading screens, menus)
+  skip_end: 0           # ignore the last N seconds
+  mirror: false         # randomly mirror the gameplay left-right, so reused footage looks fresh
+
+captions:
+  enabled: true
+  model: small          # speech model: tiny, base, small, medium, large-v3, turbo (bigger = more accurate, slower)
+  language: auto        # auto, or a code like en, ar, fr, es, de
+  device: auto          # auto uses an NVIDIA GPU if one works, otherwise the CPU
+  font: Montserrat Black  # bundled in fonts/. Any font installed on your computer works too.
+  font_size: 100
+  uppercase: true
+  remove_punctuation: true   # drops . , : ; quotes (keeps ? and !)
+  max_words: 3          # words on screen at once (1 = one word at a time)
+  max_chars: 18         # start a new caption before a line gets longer than this
+  color: "#FFD400"      # yellow text
+  stroke_color: "#FFFFFF"  # white outline
+  stroke_width: 7
+  shadow_color: "#000000"  # soft drop shadow
+  shadow_opacity: 0.6   # 0 = no shadow, 1 = solid
+  shadow_offset: 6
+  shadow_blur: 7
+  position: 0.5         # height on screen: 0 = top, 0.5 = middle, 1 = bottom
+  animation: pop        # pop = each caption bounces in, none = no animation
+  highlight_color: ""   # e.g. "#00FF66" to color the word being spoken right now. Empty = off.
+  save_srt: true        # also save a normal .srt subtitle file next to each reel (for YouTube uploads)
+
+hook:
+  # A title box at the start of the reel. Text comes from a .txt file with the same name as the clip
+  # (my_clip.mp4 -> my_clip.txt), or title.txt in the clip's folder for all clips in that folder.
+  enabled: true
+  duration: 4           # seconds on screen (0 = the whole video)
+  font: Montserrat Black
+  font_size: 60
+  text_color: "#000000"
+  box_color: "#FFFFFF"
+
+progress_bar:
+  enabled: true         # thin bar on the line between clip and gameplay that fills up as the reel plays
+  color: "#FFD400"
+  height: 10
+
+audio:
+  normalize: true       # make every reel equally loud (like the big accounts do)
+  loudness: -14         # LUFS. -14 is what TikTok / YouTube / Instagram aim for.
+  music_volume: 0.12    # background music level (only used if the music folder has tracks)
+
+parts:
+  max_seconds: 0        # 0 = off. e.g. 90: longer clips are cut at pauses into Part 1/2/3 reels of at most 90s
+
+tools:
+  # Only needed if ffmpeg isn't found automatically. Use single quotes, e.g. 'C:\ffmpeg\bin\ffmpeg.exe'
+  ffmpeg: ''
+  ffprobe: ''

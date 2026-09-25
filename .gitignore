@@ -1,0 +1,23 @@
+# Your media (kept out of git; each folder has a README.txt explaining it)
+clips/*
+!clips/README.txt
+gameplay/*
+!gameplay/README.txt
+music/*
+!music/README.txt
+output/*
+!output/README.txt
+
+# Created by the bot while it runs
+.work/
+.bot.lock
+models/
+logs/
+bot_state*.json*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/

@@ -1,0 +1,105 @@
+"""Speech-to-text with word timings (faster-whisper, runs offline on your machine)."""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+# Windows without "developer mode" can't make symlinks; the model download works anyway, so skip the warning.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+log = logging.getLogger("brainrot")
+# The model download site prints "set a HF_TOKEN" notices that don't apply to this bot.
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
+
+@dataclass
+class Word:
+    text: str
+    start: float
+    end: float
+
+
+def tidy_words(words: list[Word], min_len: float = 0.05) -> list[Word]:
+    """Sort words and make their timings sane (no negative, zero-length or backwards words)."""
+    cleaned: list[Word] = []
+    for w in sorted(words, key=lambda w: w.start):
+        text = w.text.strip()
+        if not text:
+            continue
+        start = max(0.0, w.start)
+        if cleaned and start < cleaned[-1].start:
+            start = cleaned[-1].start
+        end = max(w.end, start + min_len)
+        if cleaned and cleaned[-1].end > start:
+            cleaned[-1].end = max(cleaned[-1].start + min_len, start)
+        cleaned.append(Word(text, start, end))
+    return cleaned
+
+
+class Transcriber:
+    """Loads the Whisper model once and keeps it in memory while the bot runs."""
+
+    def __init__(self, model: str = "small", language: str = "auto", device: str = "auto", models_dir: Path | None = None):
+        self.model_name = model
+        self.language = None if language in ("", "auto") else language
+        self.device = device
+        self.models_dir = models_dir
+        self._model = None
+
+    def _create(self, device: str):
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError("faster-whisper is not installed. Run: pip install -r requirements.txt") from exc
+        where = "GPU if available" if device == "auto" else device.upper()
+        log.info("Loading speech model '%s' (%s). The first time, it is downloaded; this can take a few minutes...", self.model_name, where)
+        kwargs = {}
+        if self.models_dir:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+            kwargs["download_root"] = str(self.models_dir)
+        compute_type = "int8" if device == "cpu" else "auto"
+        return WhisperModel(self.model_name, device=device, compute_type=compute_type, **kwargs)
+
+    def load(self) -> None:
+        if self._model is None:
+            try:
+                self._model = self._create(self.device)
+            except Exception as exc:
+                if self.device == "cpu":
+                    raise
+                log.warning("Couldn't use the GPU for speech-to-text (%s). Using the CPU instead.", exc)
+                self.device = "cpu"
+                self._model = self._create("cpu")
+
+    def transcribe(self, audio_path: Path) -> list[Word]:
+        self.load()
+        try:
+            return self._run(audio_path)
+        except Exception as exc:
+            if self.device == "cpu":
+                raise
+            # Typical cause: CUDA is detected but cuDNN/cuBLAS libraries are missing.
+            log.warning("Speech-to-text failed on the GPU (%s). Retrying on the CPU.", exc)
+            self.device = "cpu"
+            self._model = self._create("cpu")
+            return self._run(audio_path)
+
+    def _run(self, audio_path: Path) -> list[Word]:
+        segments, info = self._model.transcribe(
+            str(audio_path),
+            language=self.language,
+            word_timestamps=True,
+            vad_filter=True,
+            condition_on_previous_text=False,
+            beam_size=5,
+        )
+        words: list[Word] = []
+        for segment in segments:  # the actual work happens while iterating
+            for w in segment.words or []:
+                if w.word and w.word.strip():
+                    words.append(Word(w.word.strip(), float(w.start), float(w.end)))
+        log.info("Heard %d words (language: %s)", len(words), getattr(info, "language", "?"))
+        return tidy_words(words)
