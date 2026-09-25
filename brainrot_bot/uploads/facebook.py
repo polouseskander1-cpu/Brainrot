@@ -9,7 +9,7 @@ from typing import Callable
 from . import http
 from .http import UploadError
 from .instagram import graph_checked
-from .post import PostInfo
+from .post import Posted, PostInfo
 
 KEY = "facebook"
 NAME = "Facebook Reels"
@@ -39,11 +39,12 @@ def page_credentials(page: dict) -> dict:
     return {"page_id": str(page["id"]), "page_token": page["access_token"], "account": page.get("name", "your Page")}
 
 
-def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False) -> str:
+def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False,
+           account: str = KEY) -> Posted:
     if not MIN_SECONDS <= post.duration <= MAX_SECONDS:
         raise UploadError(f"Facebook Reels must be {MIN_SECONDS}-{MAX_SECONDS} seconds long (this one is {post.duration:.0f}s)", retry=False)
     version = cfg.upload.meta_api_version
-    creds = store.get(KEY)
+    creds = store.get(account)
     page_id, token = creds.get("page_id", ""), creds.get("page_token", "")
     start = graph_checked(http.request("POST", f"{GRAPH}/{version}/{page_id}/video_reels", form={"upload_phase": "start", "access_token": token}), NAME)
     video_id = start.get("video_id")
@@ -62,7 +63,27 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
         "upload_phase": "finish",
         "video_id": video_id,
         "video_state": "PUBLISHED",
-        "description": post.caption,
+        "description": post.render("facebook", getattr(cfg.upload, "templates", None)),
         "access_token": token,
     }), NAME)
-    return f"https://www.facebook.com/reel/{video_id}"
+    url = f"https://www.facebook.com/reel/{video_id}"
+    return Posted(url, url, str(video_id))
+
+
+def stats(post_id: str, cfg: SimpleNamespace, store, account: str = KEY) -> dict:
+    """Plays, likes and comments of a Page reel."""
+    version = cfg.upload.meta_api_version
+    token = store.get(account).get("page_token", "")
+    data = graph_checked(http.request("GET", f"{GRAPH}/{version}/{post_id}", params={
+        "fields": "likes.summary(true).limit(0),comments.summary(true).limit(0)", "access_token": token}), NAME)
+    numbers = {"likes": int(((data.get("likes") or {}).get("summary") or {}).get("total_count", 0)),
+               "comments": int(((data.get("comments") or {}).get("summary") or {}).get("total_count", 0))}
+    try:
+        insights = graph_checked(http.request("GET", f"{GRAPH}/{version}/{post_id}/video_insights", params={
+            "metric": "blue_reels_play_count", "access_token": token}), NAME)
+        for item in insights.get("data", []):
+            if item.get("name") == "blue_reels_play_count":
+                numbers["views"] = int((item.get("values") or [{}])[0].get("value", 0))
+    except UploadError:
+        pass
+    return numbers

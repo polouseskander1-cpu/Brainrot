@@ -149,7 +149,14 @@ upload:
   tiktok: false
   instagram: false      # Instagram Reels
   facebook: false       # Facebook Page Reels (3-90 second reels only)
-  hours_between_posts: 3   # space out posts on each platform (0 = post as soon as a reel is ready)
+  x: false              # X / Twitter (pay-per-use API, about $0.015 per post)
+  pinterest: false      # Pinterest video Pins
+  # Snapchat Spotlight has no public posting API, so it can't be automated: upload those from the app.
+  hours_between_posts: 3   # at least this long between two posts on the same account
+  post_times: auto      # auto = 12:00, 17:00 and 20:00 until the stats show this account's best hours
+                        # a list like ["12:00", "18:30"] = only at these times | [] = any time
+  # More than one account per platform? Connect them in the menu, then put an accounts.txt in a clip
+  # folder to choose where its reels go, e.g. "youtube = gaming" or "instagram = off".
   hashtags: "#fyp #viral #podcast"   # added to every post. A hashtags.txt in a clip folder adds more.
   post_translations: false  # also post the translated reels (captions.translate_to)
   youtube_privacy: public  # public, unlisted or private. Until your Google project passes YouTube's audit, uploads are locked private.
@@ -158,4 +165,16 @@ upload:
                            # direct = posts by itself (needs a TikTok app that passed TikTok's audit)
   tiktok_privacy: PUBLIC_TO_EVERYONE   # for direct mode
   tiktok_redirect_port: 8765           # must match the redirect URI in your TikTok app
+  x_redirect_port: 8766        # must match the callback URI in your X app
+  pinterest_redirect_port: 8767 # must match the redirect URI in your Pinterest app
   meta_api_version: v25.0
+  stats: true           # read views and likes of posts (2 h, 1 day, 3 days, 1 week, 1 month after posting)
+  templates:            # the text of each post. {title}, {caption} and {hashtags} are filled in.
+    youtube_title: "{title}"
+    youtube: "{caption}\n\n{hashtags}"
+    tiktok: "{caption} {hashtags}"
+    instagram: "{caption}\n\n{hashtags}"   # Instagram uses at most 5 hashtags, X 2 (the first ones)
+    facebook: "{caption}\n\n{hashtags}"
+    x: "{caption} {hashtags}"
+    pinterest_title: "{title}"
+    pinterest: "{caption} {hashtags}"

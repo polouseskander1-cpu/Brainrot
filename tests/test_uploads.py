@@ -57,6 +57,7 @@ class FakeApi:
 
 def cfg(**upload):
     values = dict(DEFAULTS["upload"])
+    values.update(post_times=[])  # post whenever the spacing allows (the schedule has its own tests)
     values.update(upload)
     return SimpleNamespace(upload=SimpleNamespace(**values))
 
@@ -147,7 +148,7 @@ def test_youtube_resumable_upload_in_chunks(monkeypatch, store, video):
            .on("POST", "upload/youtube/v3/videos", response(200, Location="https://upload.example/session"))
            .on("PUT", "upload.example/session", chunk_answer))
     result = youtube.upload(video, POST, cfg(youtube_privacy="unlisted"), store)
-    assert result == "https://youtube.com/shorts/vid123"
+    assert (result.url, result.post_id) == ("https://youtube.com/shorts/vid123", "vid123")
     init = api.find("POST", "upload/youtube")[0]
     assert init.params == {"uploadType": "resumable", "part": "snippet,status"}
     assert init.headers["X-Upload-Content-Length"] == str(size) and init.headers["Authorization"] == "Bearer fresh"
@@ -212,7 +213,7 @@ def test_tiktok_draft_upload(monkeypatch, store, video):
            .on("PUT", "upload.tiktok.example", response(201))
            .on("POST", "status/fetch", tiktok_ok({"status": "PROCESSING_UPLOAD"}), tiktok_ok({"status": "SEND_TO_USER_INBOX"})))
     result = tiktok.upload(video, POST, cfg(tiktok_mode="draft"), store)
-    assert "inbox" in result
+    assert "inbox" in result.message and not result.post_id  # drafts are posted by you in the app
     init = api.find("POST", "inbox/video/init")[0]
     assert init.json == {"source_info": {"source": "FILE_UPLOAD", "video_size": 614400, "chunk_size": 614400, "total_chunk_count": 1}}
     put = api.find("PUT", "upload.tiktok")[0]
@@ -229,7 +230,7 @@ def test_tiktok_direct_post_checks_creator_and_explains_audit(monkeypatch, store
         tiktok.upload(video, POST, cfg(tiktok_mode="direct"), store)
     assert not err.value.retry
     body = api.find("POST", "post/publish/video/init")[0].json
-    assert body["post_info"]["privacy_level"] == "PUBLIC_TO_EVERYONE" and body["post_info"]["title"] == POST.caption
+    assert body["post_info"]["privacy_level"] == "PUBLIC_TO_EVERYONE" and body["post_info"]["title"] == "Why the Roman Empire fell #fyp #history"
 
 
 def test_tiktok_refreshes_expired_token(monkeypatch, store, video):
@@ -257,7 +258,8 @@ def test_instagram_reel_upload(monkeypatch, store, video):
            .on("GET", r"/c1$", response(200, {"status_code": "IN_PROGRESS"}), response(200, {"status_code": "FINISHED"}))
            .on("POST", "media_publish", response(200, {"id": "m9"}))
            .on("GET", r"/m9$", response(200, {"permalink": "https://www.instagram.com/reel/abc/"})))
-    assert instagram.upload(video, POST, cfg(), store) == "https://www.instagram.com/reel/abc/"
+    result = instagram.upload(video, POST, cfg(), store)
+    assert (result.url, result.post_id) == ("https://www.instagram.com/reel/abc/", "m9")
     container = api.find("POST", "178/media$")[0].form
     assert container["media_type"] == "REELS" and container["upload_type"] == "resumable" and container["caption"] == POST.caption
     upload = api.find("POST", "rupload")[0]
@@ -292,7 +294,7 @@ def test_facebook_reel_upload_and_length_limit(monkeypatch, store, video):
     api = (FakeApi(monkeypatch)
            .on("POST", "55/video_reels", response(200, {"video_id": "v7", "upload_url": "https://rupload.facebook.com/video-upload/v25.0/v7"}), response(200, {"success": True}))
            .on("POST", "rupload.facebook.com", response(200, {"success": True})))
-    assert facebook.upload(video, POST, cfg(), store) == "https://www.facebook.com/reel/v7"
+    assert facebook.upload(video, POST, cfg(), store).post_id == "v7"
     start, finish = api.find("POST", "video_reels")
     assert start.form["upload_phase"] == "start"
     assert finish.form == {"upload_phase": "finish", "video_id": "v7", "video_state": "PUBLISHED", "description": POST.caption, "access_token": "ptok"}
@@ -309,7 +311,7 @@ class FakePlatform:
         self.outcomes = list(outcomes)
         self.uploaded = []
 
-    def upload(self, video, post, cfg, store, should_stop):
+    def upload(self, video, post, cfg, store, should_stop, account="youtube"):
         self.uploaded.append(video)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):

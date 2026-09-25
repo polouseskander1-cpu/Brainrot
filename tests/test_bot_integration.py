@@ -247,7 +247,7 @@ def test_ai_picks_the_moments_and_writes_hooks_and_captions(workspace, fake_clau
     assert [r.suffix for r in rendered] == ["_moment1"]
     post = rendered[0].post
     assert post.title == "The day he lost it all" and post.description == "Would you have made the same choice?"
-    assert post.hashtags.split()[-3:] == ["#Show", "#money", "#story"]
+    assert post.hashtags.split() == ["#Show", "#money", "#story", "#fyp", "#viral", "#podcast"]  # specific tags first
     systems = [r["body"]["system"] for r in fake_claude.requests]
     assert systems[0].startswith("You are an experienced short-form video editor")
     assert "[5] " in fake_claude.requests[0]["body"]["messages"][0]["content"]
@@ -311,3 +311,38 @@ def test_links_are_downloaded_and_made_into_reels(workspace, monkeypatch):
     assert bot.run_once() == 1
     assert (workspace / "output" / "show" / "Great Episode [abc123].mp4").exists()
     assert new_bot(workspace).run_once() == 0  # the link is not downloaded again
+
+
+def test_finished_reels_are_posted_with_their_details(workspace, monkeypatch):
+    from brainrot_bot.credentials import Credentials
+    from brainrot_bot.uploads import Posted
+    from brainrot_bot.uploads import queue as queue_module
+
+    posted = []
+
+    class FakeYouTube:
+        KEY, NAME = "youtube", "YouTube Shorts"
+
+        @staticmethod
+        def upload(video, post, cfg, store, should_stop, account="youtube"):
+            posted.append((video.name, account, post.render("youtube", cfg.upload.templates)))
+            return Posted("https://youtube.com/shorts/abc", "https://youtube.com/shorts/abc", "abc")
+
+    monkeypatch.setitem(queue_module.PLATFORMS, "youtube", FakeYouTube)
+    Credentials(workspace / "credentials").set("youtube", {"refresh_token": "r"})
+    Credentials(workspace / "credentials").set("youtube:other", {"refresh_token": "r"})
+    (workspace / "config.yaml").write_text(BASE_CONFIG + "upload:\n  youtube: true\n  post_times: []\n  hours_between_posts: 0\n"
+                                           "  hashtags: '#fyp'\n  templates:\n    youtube: '{caption} | {hashtags}'\n", encoding="utf-8")
+    (workspace / "clips" / "show" / "hashtags.txt").write_text("#showtag\n", encoding="utf-8")
+    bot = new_bot(workspace)
+    assert bot.run_once() == 1
+    assert posted == [("ep1.mp4", "youtube", "Test title | #showtag #Show #fyp")]
+    (item,) = bot.state.data["uploads"].values()
+    assert item["folder"] == "show" and item["clip"] == "show/ep1.mp4" and item["gameplay"] == ["run.mp4"]
+    assert item["post_id"] == "abc" and item["status"] == "done"
+
+    # This folder's reels go to the other channel from now on.
+    (workspace / "clips" / "show" / "accounts.txt").write_text("youtube = other\n", encoding="utf-8")
+    make_clip(workspace / "clips" / "show" / "ep2.mp4", 3, silent=(1, 2))
+    assert new_bot(workspace).run_once() == 1
+    assert posted[-1][:2] == ("ep2.mp4", "youtube:other")

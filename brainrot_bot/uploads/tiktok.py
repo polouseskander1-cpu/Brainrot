@@ -18,7 +18,7 @@ from ..media import StopRequested
 from . import http
 from .http import UploadError
 from .oauth import browser_login, pkce_pair
-from .post import PostInfo
+from .post import Posted, PostInfo
 
 KEY = "tiktok"
 NAME = "TikTok"
@@ -67,8 +67,10 @@ def _check(resp: http.Response) -> dict:
     raise return_error
 
 
-def connect(client_key: str, client_secret: str, mode: str, port: int, printer: Callable[[str], None] = print) -> dict:
-    scopes = "user.info.basic,video.upload" + (",video.publish" if mode == "direct" else "")
+def connect(client_key: str, client_secret: str, mode: str, port: int, printer: Callable[[str], None] = print,
+            stats: bool = False) -> dict:
+    """stats: also ask for video.list (views and likes), which needs the Display API product in the TikTok app."""
+    scopes = "user.info.basic,video.upload" + (",video.publish" if mode == "direct" else "") + (",video.list" if stats else "")
     verifier, challenge = pkce_pair(hex_challenge=True)
 
     def build(redirect: str, state: str) -> str:
@@ -121,8 +123,8 @@ def display_name(token: str) -> str:
         return "your account"
 
 
-def access_token(store) -> str:
-    creds = store.get(KEY)
+def access_token(store, account: str = KEY) -> str:
+    creds = store.get(account)
     if creds.get("access_token") and float(creds.get("expires_at", 0)) > time.time() + 300:
         return creds["access_token"]
     if not creds.get("refresh_token") or float(creds.get("refresh_expires_at", 0)) < time.time():
@@ -134,12 +136,13 @@ def access_token(store) -> str:
         "refresh_token": creds["refresh_token"],
     })
     fields = _token_fields(resp)
-    store.update(KEY, **fields)
+    store.update(account, **fields)
     return fields["access_token"]
 
 
-def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False) -> str:
-    token = access_token(store)
+def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False,
+           account: str = KEY) -> Posted:
+    token = access_token(store, account)
     auth = {"Authorization": f"Bearer {token}"}
     size = video.stat().st_size
     chunk_size, chunks = chunk_plan(size)
@@ -157,7 +160,7 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
             raise UploadError(f"this account can post videos up to {max_seconds}s on TikTok", retry=False)
         body = {
             "post_info": {
-                "title": post.caption[:2200],
+                "title": post.render("tiktok", getattr(cfg.upload, "templates", None)),
                 "privacy_level": privacy,
                 "disable_duet": False,
                 "disable_comment": False,
@@ -190,7 +193,7 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
                 raise UploadError(f"TikTok upload failed ({resp.status}): {resp.text()}", retry=resp.status >= 500 or resp.status == 429)
 
     # TikTok processes the video for a little while; wait to see how it went.
-    status = "PROCESSING_UPLOAD"
+    status, data = "PROCESSING_UPLOAD", {}
     for _ in range(24):
         time.sleep(5)
         data = _check(http.request("POST", f"{API}/post/publish/status/fetch/", headers=auth, json_body={"publish_id": publish_id}))
@@ -200,5 +203,23 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
         if status in ("SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"):
             break
     if status == "SEND_TO_USER_INBOX" or (mode == "draft" and status != "PUBLISH_COMPLETE"):
-        return "sent to your TikTok inbox - open TikTok and tap the notification to post it"
-    return "posted on TikTok" if status == "PUBLISH_COMPLETE" else "uploaded to TikTok (still processing)"
+        return Posted("sent to your TikTok inbox - open TikTok and tap the notification to post it")
+    if status != "PUBLISH_COMPLETE":
+        return Posted("uploaded to TikTok (still processing)")
+    # TikTok spells it "publicaly"; only public posts have an id.
+    ids = data.get("publicaly_available_post_id") or data.get("publicly_available_post_id") or []
+    post_id = str(ids[0]) if ids else ""
+    return Posted("posted on TikTok", "", post_id)
+
+
+def stats(post_id: str, cfg: SimpleNamespace, store, account: str = KEY) -> dict:
+    """Views, likes, comments and shares (needs the video.list permission)."""
+    token = access_token(store, account)
+    resp = http.request("POST", f"{API}/video/query/", params={"fields": "id,view_count,like_count,comment_count,share_count"},
+                        headers={"Authorization": f"Bearer {token}"}, json_body={"filters": {"video_ids": [post_id]}})
+    videos = _check(resp).get("videos") or []
+    if not videos:
+        return {}
+    v = videos[0]
+    return {"views": int(v.get("view_count", 0)), "likes": int(v.get("like_count", 0)),
+            "comments": int(v.get("comment_count", 0)), "shares": int(v.get("share_count", 0))}

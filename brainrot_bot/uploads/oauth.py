@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
+import select
+import socket
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -36,9 +38,11 @@ def browser_login(
     timeout: float = 300,
     printer: Callable[[str], None] = print,
     open_browser: bool = True,
+    host: str = "127.0.0.1",
 ) -> tuple[dict[str, str], str]:
     """Opens build_url(redirect_uri, state) in the browser and waits for the platform to send the
-    browser back. Returns (query parameters, redirect_uri)."""
+    browser back. Returns (query parameters, redirect_uri). host "localhost" also listens on IPv6,
+    because browsers may send localhost there."""
     state = secrets.token_urlsafe(16)
     received: dict[str, str] = {}
 
@@ -72,8 +76,14 @@ def browser_login(
         server = HTTPServer(("127.0.0.1", port), Handler)
     except OSError as exc:
         raise UploadError(f"couldn't listen on port {port} for the login ({exc}). Close other programs using it.", retry=False) from exc
+    servers = [server]
+    if host == "localhost":
+        try:
+            servers.append(_IPv6Server(("::1", server.server_address[1]), Handler))
+        except OSError:
+            pass  # no IPv6 here: browsers then use 127.0.0.1
     try:
-        redirect_uri = f"http://127.0.0.1:{server.server_address[1]}{path}"
+        redirect_uri = f"http://{host}:{server.server_address[1]}{path}"
         url = build_url(redirect_uri, state)
         printer("A browser window will open. Log in and allow access.")
         printer("If it doesn't open, copy this link into your browser:")
@@ -83,12 +93,14 @@ def browser_login(
                 webbrowser.open(url)
             except Exception:  # noqa: BLE001
                 pass
-        server.timeout = 1
         deadline = time.monotonic() + timeout
         while not received and time.monotonic() < deadline:
-            server.handle_request()
+            ready, _, _ = select.select(servers, [], [], 1.0)
+            for ready_server in ready:
+                ready_server.handle_request()
     finally:
-        server.server_close()
+        for each in servers:
+            each.server_close()
 
     if not received:
         raise UploadError("the login took too long (5 minutes). Try again.", retry=False)
@@ -100,3 +112,7 @@ def browser_login(
     if not received.get("code"):
         raise UploadError("login failed (no code came back). Try again.", retry=False)
     return received, redirect_uri
+
+
+class _IPv6Server(HTTPServer):
+    address_family = socket.AF_INET6

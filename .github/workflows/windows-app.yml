@@ -117,8 +117,8 @@ jobs:
           Write-Host "== setup wizard + background bot"
           $wiz = New-Item -ItemType Directory -Force ci/wiz
           (Get-Content test_app/_internal/config.yaml) -replace '^  model: small', '  model: tiny' | Set-Content -Encoding utf8 ci/wiz/config.yaml
-          # run mode, start at login, 4 platforms, AI, 3 folders, open folders, quit the menu
-          $answers = @("1", "n", "n", "n", "n", "n", "n", "$($wiz.FullName)\Gameplay", "$($wiz.FullName)\Clips", "$($wiz.FullName)\Reels", "n", "0") -join "`n"
+          # run mode, start at login, 6 platforms, AI, 3 folders, open folders, quit the menu
+          $answers = @("1", "n", "n", "n", "n", "n", "n", "n", "n", "$($wiz.FullName)\Gameplay", "$($wiz.FullName)\Clips", "$($wiz.FullName)\Reels", "n", "0") -join "`n"
           $answers | & $exe --config ci/wiz/config.yaml
           & $exe --status
           Copy-Item ci/gameplay/run.mp4 "$($wiz.FullName)\Gameplay\"

@@ -28,6 +28,18 @@ STOP_FILE = APP_DIR / ".stop"
 LOCK_FILE = APP_DIR / ".bot.lock"
 PID_FILE = APP_DIR / ".bot.pid"
 
+# The text of each post, per platform. {title}, {caption} and {hashtags} are filled in (upload.templates).
+DEFAULT_TEMPLATES = {
+    "youtube_title": "{title}",
+    "youtube": "{caption}\n\n{hashtags}",
+    "tiktok": "{caption} {hashtags}",
+    "instagram": "{caption}\n\n{hashtags}",
+    "facebook": "{caption}\n\n{hashtags}",
+    "x": "{caption} {hashtags}",
+    "pinterest_title": "{title}",
+    "pinterest": "{caption} {hashtags}",
+}
+
 DEFAULTS: dict[str, Any] = {
     "folders": {
         "clips": "clips",
@@ -160,7 +172,10 @@ DEFAULTS: dict[str, Any] = {
         "tiktok": False,
         "instagram": False,
         "facebook": False,
+        "x": False,
+        "pinterest": False,
         "hours_between_posts": 3,
+        "post_times": "auto",
         "hashtags": "#fyp #viral #podcast",
         "post_translations": False,
         "youtube_privacy": "public",
@@ -168,7 +183,11 @@ DEFAULTS: dict[str, Any] = {
         "tiktok_mode": "draft",
         "tiktok_privacy": "PUBLIC_TO_EVERYONE",
         "tiktok_redirect_port": 8765,
+        "x_redirect_port": 8766,
+        "pinterest_redirect_port": 8767,
         "meta_api_version": "v25.0",
+        "stats": True,
+        "templates": dict(DEFAULT_TEMPLATES),
     },
     "tools": {
         "ffmpeg": "",
@@ -196,8 +215,11 @@ def _merge(base: dict, override: dict, prefix: str, unknown: list[str]) -> None:
             base[key] = value
 
 
+KEEP_AS_DICT = {"templates"}  # settings that are lookup tables, not sections
+
+
 def _to_namespace(d: dict) -> SimpleNamespace:
-    return SimpleNamespace(**{k: _to_namespace(v) if isinstance(v, dict) else v for k, v in d.items()})
+    return SimpleNamespace(**{k: _to_namespace(v) if isinstance(v, dict) and k not in KEEP_AS_DICT else v for k, v in d.items()})
 
 
 _COLOR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
@@ -377,9 +399,32 @@ def _validate(c: dict) -> None:
     app["setup_done"] = bool(app["setup_done"])
 
     up = c["upload"]
-    for platform in ("youtube", "tiktok", "instagram", "facebook"):
+    for platform in ("youtube", "tiktok", "instagram", "facebook", "x", "pinterest"):
         up[platform] = bool(up[platform])
     up["hours_between_posts"] = _num("upload.hours_between_posts", up["hours_between_posts"], 0, 168)
+    times = up["post_times"]
+    if times in (None, "", False, "off", "any", "anytime"):
+        up["post_times"] = []
+    elif isinstance(times, str) and times.strip().lower() == "auto":
+        up["post_times"] = "auto"
+    else:
+        if isinstance(times, str):
+            times = times.replace(",", " ").split()
+        if not isinstance(times, list):
+            raise ConfigError("'upload.post_times' must be auto, [] (any time) or a list like [\"12:00\", \"18:30\"]")
+        cleaned = []
+        for value in times:
+            text = str(value).strip()
+            if isinstance(value, int) and 0 <= value < 1440 * 60:  # YAML 1.1 reads 12:00 as a number of minutes
+                text = f"{value // 60 % 24:02d}:{value % 60:02d}"
+            if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", text):
+                raise ConfigError(f"'upload.post_times' has {value!r}; use times like \"12:00\" or \"18:30\"")
+            cleaned.append(text)
+        up["post_times"] = cleaned
+    up["stats"] = bool(up["stats"])
+    if not isinstance(up["templates"], dict):
+        raise ConfigError("'upload.templates' must be a section, e.g. tiktok: \"{caption} {hashtags}\"")
+    up["templates"] = {k: str(v if v is not None else DEFAULT_TEMPLATES.get(k, "")) for k, v in up["templates"].items()}
     up["hashtags"] = str(up["hashtags"] or "").strip()
     up["post_translations"] = bool(up["post_translations"])
     up["youtube_privacy"] = _choice("upload.youtube_privacy", up["youtube_privacy"], ("public", "unlisted", "private"))
@@ -388,7 +433,8 @@ def _validate(c: dict) -> None:
     up["tiktok_privacy"] = str(up["tiktok_privacy"]).strip().upper()
     if up["tiktok_privacy"] not in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"):
         raise ConfigError("'upload.tiktok_privacy' must be PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR or SELF_ONLY")
-    up["tiktok_redirect_port"] = _num("upload.tiktok_redirect_port", up["tiktok_redirect_port"], 1024, 65535, integer=True)
+    for key in ("tiktok_redirect_port", "x_redirect_port", "pinterest_redirect_port"):
+        up[key] = _num(f"upload.{key}", up[key], 1024, 65535, integer=True)
     up["meta_api_version"] = str(up["meta_api_version"]).strip()
     if not re.fullmatch(r"v\d+\.\d+", up["meta_api_version"]):
         raise ConfigError("'upload.meta_api_version' must look like v25.0")

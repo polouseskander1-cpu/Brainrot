@@ -74,7 +74,7 @@ def test_first_setup_writes_everything(config, tmp_path, monkeypatch):
     typed(monkeypatch,
           "2",            # run only while the window is open
           "",             # start at login: default yes on first setup
-          "n", "n", "n", "n",  # skip all platforms
+          "n", "n", "n", "n", "n", "n",  # skip all six platforms
           "n",            # no AI
           f'"{gameplay}"', str(clips), str(reels),  # quotes from "Copy as path" are fine
           "y")            # open the folders
@@ -100,16 +100,39 @@ def test_connecting_a_platform_and_retrying_after_an_error(config, monkeypatch):
         return True
 
     monkeypatch.setitem(wizard.CONNECTORS, "instagram", fake_instagram)
-    typed(monkeypatch, "n", "n", "y", "y", "", "n")  # skip YouTube, TikTok; connect Instagram, fail, retry; skip Facebook
+    # skip YouTube, TikTok; connect Instagram, fail, retry; skip Facebook, X, Pinterest; no extra accounts
+    typed(monkeypatch, "n", "n", "y", "y", "", "n", "n", "n")
     cfg = wizard.run_setup(config, only_platforms=True)
     assert cfg.upload.instagram and not cfg.upload.youtube
     assert Credentials(cfg.paths.credentials).get("instagram")["account"] == "@me"
     assert len(attempts) == 2
 
     # Next time the connected account is offered to keep.
-    typed(monkeypatch, "n", "n", "1", "n")
+    typed(monkeypatch, "n", "n", "1", "n", "n", "n", "n")
     cfg = wizard.run_setup(config, only_platforms=True)
     assert cfg.upload.instagram
+
+
+def test_adding_a_second_account_for_some_folders(config, monkeypatch):
+    cfg = load_config(config)
+    for name in ("Gaming Clips", "Podcast"):
+        (cfg.paths.clips / name).mkdir(parents=True)
+    connected = []
+
+    def fake_youtube(cfg, creds, account="youtube"):
+        connected.append(account)
+        creds.set(account, {"refresh_token": "r", "account": "Gaming Channel"})
+        return True
+
+    monkeypatch.setitem(wizard.CONNECTORS, "youtube", fake_youtube)
+    typed(monkeypatch, "n", "n", "n", "n", "n", "n",  # the six platforms: nothing changes
+          "y", "1", "main", "gaming", "1",  # another account: YouTube, 'main' is refused, 'gaming', for folder 1
+          "n")
+    cfg = wizard.run_setup(config, only_platforms=True)
+    assert connected == ["youtube:gaming"]
+    assert cfg.upload.youtube
+    assert (cfg.paths.clips / "Gaming Clips" / "accounts.txt").read_text().splitlines()[-1] == "youtube = gaming"
+    assert not (cfg.paths.clips / "Podcast" / "accounts.txt").exists()
 
 
 def test_skip_word_skips_a_platform(config, monkeypatch):

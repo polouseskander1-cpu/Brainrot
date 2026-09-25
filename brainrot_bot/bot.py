@@ -240,6 +240,8 @@ class Bot:
                     self.process(path)
                 if self.uploads is not None and not self.should_stop():
                     self.uploads.run_due(self.should_stop)
+                    if self.cfg.upload.stats:
+                        self.uploads.refresh_stats(self.should_stop)
             except StopRequested:
                 break
             except Exception:  # noqa: BLE001 - e.g. a folder that briefly can't be read; never stop the bot
@@ -337,10 +339,12 @@ class Bot:
             updated=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
         if self.uploads is not None:
+            folder = key.split("/")[0] if "/" in key else ""
             for item in rendered:
                 if item.language and not self.cfg.upload.post_translations:
                     continue
-                platforms = self.uploads.add(item.video, item.post)
+                details = {"folder": folder, "clip": key, "gameplay": sorted({s.key for s in item.segments}), "language": item.language}
+                platforms = self.uploads.add(item.video, item.post, clip.parent, details)
                 if platforms:
                     log.info("Queued %s for posting on %s", item.video.name, ", ".join(platforms))
         for name in ("error", "next_try", "same_as"):
@@ -490,7 +494,8 @@ class Bot:
         title = file_title or (text.title if text.by_ai else "") or piece.hook or text.hook or pretty_title(ctx.path.stem)
         title += piece.title_suffix
         description = text.caption if text.by_ai else (hook.splitlines()[0] if hook else title)
-        hashtags = merge_hashtags(cfg.upload.hashtags, folder_hashtags(ctx.path), text.hashtags)
+        # Most specific first: platforms that allow only a few hashtags (Instagram: 5, X: 2) keep these.
+        hashtags = merge_hashtags(folder_hashtags(ctx.path), text.hashtags, cfg.upload.hashtags)
 
         item, job, plan, clean = self._render_part(ctx, piece, index, hook, title)
         item.post = PostInfo(title, hashtags, plan.duration, description)

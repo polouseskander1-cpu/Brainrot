@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from ..media import StopRequested
 from . import http
 from .http import UploadError
 from .oauth import browser_login, pkce_pair
-from .post import PostInfo
+from .post import Posted, PostInfo, youtube_title
 
 KEY = "youtube"
 NAME = "YouTube Shorts"
@@ -21,6 +22,7 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
+VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 CHUNK = 8 * 1024 * 1024  # must be a multiple of 256 KB
 
@@ -107,8 +109,8 @@ def channel_name(access_token: str) -> str:
     return items[0].get("snippet", {}).get("title", "your channel")
 
 
-def access_token(store) -> str:
-    creds = store.get(KEY)
+def access_token(store, account: str = KEY) -> str:
+    creds = store.get(account)
     if creds.get("access_token") and float(creds.get("expires_at", 0)) > time.time() + 120:
         return creds["access_token"]
     resp = http.request("POST", TOKEN_URL, form={
@@ -120,17 +122,19 @@ def access_token(store) -> str:
     data = resp.json()
     if not resp.ok or not data.get("access_token"):
         raise _google_error(resp)
-    store.update(KEY, access_token=data["access_token"], expires_at=time.time() + float(data.get("expires_in", 3600)))
+    store.update(account, access_token=data["access_token"], expires_at=time.time() + float(data.get("expires_in", 3600)))
     return data["access_token"]
 
 
-def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False) -> str:
-    token = access_token(store)
+def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False,
+           account: str = KEY) -> Posted:
+    token = access_token(store, account)
     size = video.stat().st_size
+    templates = getattr(cfg.upload, "templates", None)
     metadata = {
         "snippet": {
-            "title": post.youtube_title,
-            "description": post.youtube_description,
+            "title": youtube_title(post, templates),
+            "description": re.sub(r"[<>]", "", post.render("youtube", templates)),
             "categoryId": str(cfg.upload.youtube_category),
         },
         "status": {"privacyStatus": cfg.upload.youtube_privacy, "selfDeclaredMadeForKids": False},
@@ -168,8 +172,7 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
             except UploadError:
                 resp = None
             if resp is not None and resp.status in (200, 201):
-                video_id = resp.json().get("id", "")
-                return f"https://youtube.com/shorts/{video_id}" if video_id else "uploaded"
+                return _posted(resp.json().get("id", ""))
             if resp is not None and resp.status == 308:
                 received = resp.headers.get("Range", "")  # e.g. "bytes=0-8388607"
                 offset = int(received.rsplit("-", 1)[1]) + 1 if "-" in received else 0
@@ -188,7 +191,26 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
             except UploadError:
                 continue
             if status.status in (200, 201):
-                return f"https://youtube.com/shorts/{status.json().get('id', '')}"
+                return _posted(status.json().get("id", ""))
             if status.status == 308:
                 received = status.headers.get("Range", "")
                 offset = int(received.rsplit("-", 1)[1]) + 1 if "-" in received else 0
+
+
+def _posted(video_id: str) -> Posted:
+    url = f"https://youtube.com/shorts/{video_id}" if video_id else ""
+    return Posted(url or "uploaded to YouTube", url, video_id)
+
+
+def stats(post_id: str, cfg: SimpleNamespace, store, account: str = KEY) -> dict:
+    """Views, likes and comments of an uploaded video."""
+    token = access_token(store, account)
+    resp = http.request("GET", VIDEOS_URL, params={"part": "statistics", "id": post_id}, headers={"Authorization": f"Bearer {token}"})
+    if not resp.ok:
+        raise _google_error(resp)
+    items = resp.json().get("items") or []
+    if not items:
+        return {}
+    numbers = items[0].get("statistics", {})
+    return {"views": int(numbers.get("viewCount", 0)), "likes": int(numbers.get("likeCount", 0)),
+            "comments": int(numbers.get("commentCount", 0))}

@@ -17,6 +17,7 @@ from .config import DEFAULT_CONFIG_PATH, STOP_FILE, WORK_DIR, ConfigError, load_
 from .credentials import Credentials
 from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
+from .report import stats_lines
 from .uploads import PLATFORMS, platform_name
 from .wizard import add_video_link, connect_ai, run_setup
 
@@ -112,14 +113,16 @@ def _status_lines(cfg: SimpleNamespace, running: bool, in_window: bool) -> list[
     uploads = state.get("uploads", {})
     blocked = state.get("upload_blocked", {})
     posting = []
-    for key in PLATFORMS:
-        if not (getattr(cfg.upload, key) and creds.get(key)):
+    for key in sorted(creds.data):
+        platform = key.split(":")[0]
+        if platform not in PLATFORMS or not getattr(cfg.upload, platform, False) or not creds.get(key):
             continue
-        pending = sum(1 for i in uploads.values() if i.get("platform") == key and i.get("status") == "pending")
-        posted = sum(1 for i in uploads.values() if i.get("platform") == key and i.get("status") == "done")
+        mine = [i for i in uploads.values() if i.get("account", i.get("platform")) == key]
+        pending = sum(1 for i in mine if i.get("status") in ("pending", "waiting"))
+        posted = sum(1 for i in mine if i.get("status") == "done")
         note = ui.red(" needs login!") if key in blocked else ""
         posting.append(f"{platform_name(key)} ({posted} posted, {pending} waiting){note}")
-    lines.append("  Posting:     " + (", ".join(posting) if posting else ui.dim("off (reels are saved only)")))
+    lines.append("  Posting:     " + (("\n" + " " * 15).join(posting) if posting else ui.dim("off (reels are saved only)")))
     return lines
 
 
@@ -161,6 +164,15 @@ def _watch_log(cfg: SimpleNamespace) -> None:
     ui.pause("")
     done.set()
     thread.join(timeout=2)
+
+
+def _show_stats(cfg: SimpleNamespace) -> None:
+    ui.banner("stats")
+    for line in stats_lines(_load_state(cfg)):
+        ui.say("  " + line)
+    ui.say()
+    ui.say(ui.dim("  Views and likes are read 2 hours, 1 day, 3 days, 1 week and 1 month after each post."))
+    ui.pause()
 
 
 def _retry_failed(cfg: SimpleNamespace, restart) -> None:
@@ -284,6 +296,7 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             ("Open the reels folder", lambda: ui.open_folder(cfg.paths.output)),
             ("Add a video link (YouTube, TikTok, Instagram...)", lambda: add_video_link(cfg)),
             ("Watch live activity", lambda: _watch_log(cfg)),
+            ("Stats: views, likes, best podcasts and gameplay", lambda: _show_stats(cfg)),
             ("Connect accounts / auto-posting", accounts),
             ("AI helper (Claude): " + ("connected" if ai_on else "connect"), ai),
             ("Settings (run the setup again)", settings),

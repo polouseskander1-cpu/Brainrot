@@ -7,6 +7,7 @@ import json
 import ssl
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from email.message import Message
 from urllib.parse import urlencode
@@ -50,6 +51,19 @@ class Response:
 
     def text(self, limit: int = 300) -> str:
         return self.body.decode("utf-8", errors="replace")[:limit]
+
+
+def multipart(fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
+    """(body, content type) of a multipart/form-data request. files: {field: (file name, bytes, content type)}."""
+    boundary = "----BrainrotBot" + uuid.uuid4().hex
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8"))
+    for name, (filename, content, content_type) in files.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                     f"Content-Type: {content_type}\r\n\r\n".encode("utf-8") + content + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

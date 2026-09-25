@@ -14,7 +14,8 @@ from .config import FROZEN, load_config, update_config_file
 from .credentials import Credentials
 from .links import add_link
 from .uploads import PLATFORMS, UploadError, platform_name
-from .uploads import facebook, instagram, tiktok, youtube
+from .uploads import facebook, instagram, pinterest, tiktok, x, youtube
+from .uploads.accounts import account_id, set_folder_account, split_account, valid_name
 
 log = logging.getLogger("brainrot")
 
@@ -53,7 +54,7 @@ def _skip(text: str) -> bool:
     return text.strip().lower() in ("", "skip", "s")
 
 
-def connect_youtube(cfg: SimpleNamespace, creds: Credentials) -> bool:
+def connect_youtube(cfg: SimpleNamespace, creds: Credentials, account: str = youtube.KEY) -> bool:
     _instructions([
         "YouTube needs a free Google key for a 'Desktop app' (about 5 minutes, only once):",
         "  1. console.cloud.google.com > create a project",
@@ -71,12 +72,12 @@ def connect_youtube(cfg: SimpleNamespace, creds: Credentials) -> bool:
         return False
     client_id, secret = youtube.read_client_file(ui.clean_path(raw))
     values = youtube.connect(client_id, secret, printer=ui.say)
-    creds.set(youtube.KEY, values)
+    creds.set(account, values)
     ui.say(ui.green(f"  Connected to YouTube channel: {values.get('account')}"))
     return True
 
 
-def connect_tiktok(cfg: SimpleNamespace, creds: Credentials) -> bool:
+def connect_tiktok(cfg: SimpleNamespace, creds: Credentials, account: str = tiktok.KEY) -> bool:
     port = cfg.upload.tiktok_redirect_port
     _instructions([
         "TikTok needs your own (free) TikTok developer app:",
@@ -95,31 +96,33 @@ def connect_tiktok(cfg: SimpleNamespace, creds: Credentials) -> bool:
     if _skip(key):
         return False
     secret = ui.ask_required("Client secret")
-    values = tiktok.connect(key, secret, mode, port, printer=ui.say)
-    creds.set(tiktok.KEY, values)
+    stats = ui.ask_yes_no("Also read the views and likes of posts? (needs the 'Display API' product with video.list)", default=False)
+    values = tiktok.connect(key, secret, mode, port, printer=ui.say, stats=stats)
+    creds.set(account, values)
     update_config_file(cfg.config_path, {"upload": {"tiktok_mode": mode}})
     ui.say(ui.green(f"  Connected to TikTok as: {values.get('account')}"))
     return True
 
 
-def connect_instagram(cfg: SimpleNamespace, creds: Credentials) -> bool:
+def connect_instagram(cfg: SimpleNamespace, creds: Credentials, account: str = instagram.KEY) -> bool:
     _instructions([
         "Instagram Reels needs a Professional (Business or Creator) Instagram account:",
         "  1. developers.facebook.com/apps > Create app > type 'Business'",
         "  2. Add the 'Instagram' product > 'API setup with Instagram login'",
         "  3. Add your Instagram account and press 'Generate token', then copy the token",
+        "     (allow 'instagram_business_manage_insights' too if you want views in the stats)",
         "The bot renews this token by itself every week, so it doesn't run out.",
     ])
     token = ui.ask("Access token (or 'skip')")
     if _skip(token):
         return False
     values = instagram.connect(token, cfg.upload.meta_api_version)
-    creds.set(instagram.KEY, values)
+    creds.set(account, values)
     ui.say(ui.green(f"  Connected to Instagram: {values.get('account')}"))
     return True
 
 
-def connect_facebook(cfg: SimpleNamespace, creds: Credentials) -> bool:
+def connect_facebook(cfg: SimpleNamespace, creds: Credentials, account: str = facebook.KEY) -> bool:
     _instructions([
         "Facebook Reels posts to a Facebook Page you manage (reels of 3-90 seconds):",
         "  1. developers.facebook.com/apps > your 'Business' app > App settings > Basic:",
@@ -140,12 +143,93 @@ def connect_facebook(cfg: SimpleNamespace, creds: Credentials) -> bool:
     ui.say("Which Page should the reels go to?")
     page = pages[ui.choose([p.get("name", p["id"]) for p in pages]) - 1]
     values = facebook.page_credentials(page)
-    creds.set(facebook.KEY, values)
+    creds.set(account, values)
     ui.say(ui.green(f"  Connected to Facebook Page: {values.get('account')}"))
     return True
 
 
-CONNECTORS = {"youtube": connect_youtube, "tiktok": connect_tiktok, "instagram": connect_instagram, "facebook": connect_facebook}
+def connect_x(cfg: SimpleNamespace, creds: Credentials, account: str = x.KEY) -> bool:
+    port = cfg.upload.x_redirect_port
+    _instructions([
+        "X needs your own X developer app. X charges per use: about $0.015 per post, no monthly fee.",
+        "  1. console.x.com > sign up for the API (pay-per-use) and add a little credit",
+        "  2. Create an app > User authentication settings > OAuth 2.0,",
+        "     type 'Web App, Automated App or Bot', permissions 'Read and write'",
+        f"  3. Callback URI:  {x.redirect_uri(port)}",
+        "  4. Keys and tokens > OAuth 2.0 Client ID and Client Secret",
+    ])
+    client_id = ui.ask("OAuth 2.0 Client ID (or 'skip')")
+    if _skip(client_id):
+        return False
+    secret = ui.ask("Client Secret (Enter if your app has none)")
+    values = x.connect(client_id.strip(), secret.strip(), port, printer=ui.say)
+    creds.set(account, values)
+    ui.say(ui.green(f"  Connected to X as: {values.get('account')}"))
+    return True
+
+
+def connect_pinterest(cfg: SimpleNamespace, creds: Credentials, account: str = pinterest.KEY) -> bool:
+    port = cfg.upload.pinterest_redirect_port
+    _instructions([
+        "Pinterest needs your own Pinterest developer app (free):",
+        "  1. developers.pinterest.com > My apps > Connect app (needs a Pinterest business account)",
+        f"  2. Add the redirect URI:  {pinterest.redirect_uri(port)}",
+        "  3. Copy the App ID and App secret key",
+        ui.yellow("New apps get 'trial access' first; ask Pinterest for standard access so pins go public."),
+    ])
+    app_id = ui.ask("App ID (or 'skip')")
+    if _skip(app_id):
+        return False
+    secret = ui.ask_required("App secret key")
+    values = pinterest.connect(app_id.strip(), secret.strip(), port, printer=ui.say)
+    boards = pinterest.list_boards(values["access_token"])
+    ui.say("Which board should the pins go to?")
+    choice = ui.choose([b.get("name", b["id"]) for b in boards] + ["Make a new board..."], default=1)
+    if choice <= len(boards):
+        board = boards[choice - 1]
+    else:
+        board = pinterest.create_board(values["access_token"], ui.ask_required("Name of the new board"))
+    values.update(board_id=str(board.get("id", "")), board=board.get("name", ""))
+    creds.set(account, values)
+    ui.say(ui.green(f"  Connected to Pinterest: {values.get('account')}, board '{values.get('board')}'"))
+    return True
+
+
+CONNECTORS = {"youtube": connect_youtube, "tiktok": connect_tiktok, "instagram": connect_instagram, "facebook": connect_facebook,
+              "x": connect_x, "pinterest": connect_pinterest}
+
+
+def add_account(cfg: SimpleNamespace, creds: Credentials) -> str | None:
+    """Connect one more account of a platform (e.g. a second YouTube channel for one podcast), give it a
+    name, and pick the clip folders that post to it. Returns the new account id."""
+    keys = list(PLATFORMS)
+    ui.say("Which platform?")
+    platform = keys[ui.choose([PLATFORMS[k].NAME for k in keys], default=1) - 1]
+    while True:
+        name = ui.ask("A short name for this account (e.g. gaming, podcast2)").strip().lower()
+        if valid_name(name) and name not in ("main", "default", "off"):
+            break
+        ui.say(ui.red("  Use letters, numbers, - or _ (and not main/off)."))
+    account = account_id(platform, name)
+    try:
+        if not CONNECTORS[platform](cfg, creds, account):
+            return None
+    except UploadError as exc:
+        ui.say(ui.red(f"  Couldn't connect: {exc}"))
+        return None
+    root = cfg.paths.clips
+    folders = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_", "~"))) if root.is_dir() else []
+    if folders:
+        ui.say(f"Which clip folders should post to {platform_name(account)}? Type their numbers, e.g. 1 3 (Enter = none yet)")
+        for number, folder in enumerate(folders, 1):
+            ui.say(f"  {ui.yellow(str(number))}) {folder}")
+        picked = ui.ask("Folders", "")
+        for token in picked.replace(",", " ").split():
+            if token.isdigit() and 1 <= int(token) <= len(folders):
+                set_folder_account(root / folders[int(token) - 1], platform, name)
+                ui.say(f"  {folders[int(token) - 1]} -> {platform_name(account)}")
+    ui.say(ui.dim(f"  (Any clip folder can use it: put '{platform} = {name}' in an accounts.txt file inside the folder.)"))
+    return account
 
 
 def setup_platforms(cfg: SimpleNamespace, creds: Credentials) -> dict[str, bool]:
@@ -259,6 +343,14 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     if only_platforms:
         ui.banner("connect accounts")
         enabled = setup_platforms(cfg, creds)
+        extra = [a for a in creds.data if ":" in a and split_account(a)[0] in PLATFORMS]
+        if extra:
+            ui.say()
+            ui.say("Extra accounts: " + ", ".join(platform_name(a) for a in sorted(extra)))
+        while ui.ask_yes_no("Add another account (a different channel/profile for some clip folders)?", default=False):
+            account = add_account(cfg, creds)
+            if account:
+                enabled[split_account(account)[0]] = True
         update_config_file(config_path, {"upload": enabled})
         return load_config(config_path)
 

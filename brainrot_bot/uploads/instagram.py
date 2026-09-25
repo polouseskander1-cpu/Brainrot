@@ -10,7 +10,7 @@ from typing import Callable
 from ..media import StopRequested
 from . import http
 from .http import UploadError
-from .post import PostInfo
+from .post import Posted, PostInfo
 
 KEY = "instagram"
 NAME = "Instagram Reels"
@@ -53,8 +53,8 @@ def connect(token: str, version: str) -> dict:
     }
 
 
-def access_token(store) -> str:
-    creds = store.get(KEY)
+def access_token(store, account: str = KEY) -> str:
+    creds = store.get(account)
     token = creds.get("access_token", "")
     now = time.time()
     if float(creds.get("expires_at", 0)) < now:
@@ -64,20 +64,21 @@ def access_token(store) -> str:
         data = resp.json()
         if resp.ok and data.get("access_token"):
             token = data["access_token"]
-            store.update(KEY, access_token=token, refreshed_at=now, expires_at=now + float(data.get("expires_in", 60 * 86400)))
+            store.update(account, access_token=token, refreshed_at=now, expires_at=now + float(data.get("expires_in", 60 * 86400)))
         elif (data.get("error") or {}).get("code") == 190:
             raise UploadError("Instagram login is no longer valid", relogin=True)
     return token
 
 
-def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False) -> str:
+def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop: Callable[[], bool] = lambda: False,
+           account: str = KEY) -> Posted:
     version = cfg.upload.meta_api_version
-    token = access_token(store)
-    user_id = store.get(KEY).get("user_id", "me")
+    token = access_token(store, account)
+    user_id = store.get(account).get("user_id", "me")
     container = graph_checked(http.request("POST", f"{GRAPH}/{version}/{user_id}/media", form={
         "media_type": "REELS",
         "upload_type": "resumable",
-        "caption": post.caption[:2200],
+        "caption": post.render("instagram", getattr(cfg.upload, "templates", None)),
         "share_to_feed": "true",
         "access_token": token,
     }))
@@ -114,4 +115,24 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
         link = graph_checked(http.request("GET", f"{GRAPH}/{version}/{media_id}", params={"fields": "permalink", "access_token": token})).get("permalink")
     except UploadError:
         link = None
-    return link or f"posted on Instagram (media {media_id})"
+    return Posted(link or f"posted on Instagram (media {media_id})", link or "", str(media_id))
+
+
+def stats(post_id: str, cfg: SimpleNamespace, store, account: str = KEY) -> dict:
+    """Likes and comments; views, shares and saves too when the login allows reading insights."""
+    version = cfg.upload.meta_api_version
+    token = access_token(store, account)
+    data = graph_checked(http.request("GET", f"{GRAPH}/{version}/{post_id}",
+                                      params={"fields": "like_count,comments_count", "access_token": token}))
+    numbers = {"likes": int(data.get("like_count", 0)), "comments": int(data.get("comments_count", 0))}
+    try:
+        insights = graph_checked(http.request("GET", f"{GRAPH}/{version}/{post_id}/insights",
+                                              params={"metric": "views,shares,saved", "access_token": token}))
+    except UploadError:
+        return numbers
+    names = {"views": "views", "shares": "shares", "saved": "saves"}
+    for item in insights.get("data", []):
+        values = item.get("values") or [{}]
+        if item.get("name") in names:
+            numbers[names[item["name"]]] = int(values[0].get("value", 0) or item.get("total_value", {}).get("value", 0))
+    return numbers
