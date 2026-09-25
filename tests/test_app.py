@@ -150,7 +150,8 @@ def test_autostart_linux_desktop_file(monkeypatch, tmp_path):
     monkeypatch.setattr(service, "LINUX_AUTOSTART", tmp_path / "autostart" / "brainrot-bot.desktop")
     service.set_autostart(True, config=tmp_path / "my config.yaml")
     text = service.LINUX_AUTOSTART.read_text(encoding="utf-8")
-    assert '"--autostart" "--config"' in text and f'"{tmp_path / "my config.yaml"}"' in text
+    assert '"--autostart" "--config"' in text
+    assert service._desktop_quote(str(tmp_path / "my config.yaml")) in text  # backslashes escaped, as the format requires
     assert service.autostart_enabled()
     service.set_autostart(False)
     assert not service.autostart_enabled()
