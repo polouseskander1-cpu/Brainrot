@@ -183,4 +183,5 @@ The code lives in `brainrot_bot/`:
 
 The Windows app is built by `.github/workflows/windows-app.yml`. It builds with PyInstaller
 (`packaging/brainrot.spec`), bundles ffmpeg, runs the tests and an end-to-end test of the finished
-`.exe` on Windows, and publishes `BrainrotBot-windows.zip` when a tag like `v1.1.0` is pushed.
+`.exe` on Windows, and publishes `BrainrotBot-windows.zip` as a release whenever the version in
+`brainrot_bot/__init__.py` changes on the default branch (or a tag like `v1.2.0` is pushed).
