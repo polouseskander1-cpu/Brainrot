@@ -41,7 +41,8 @@ class InWindowBot:
             return False
         STOP_FILE.unlink(missing_ok=True)
         service.write_pid()
-        service.kill_children_on_exit()
+        # No kill-on-close job here: ffmpeg shares this console and closes with the window anyway, and a
+        # job would also take down a background bot started from this window after a settings change.
         add_file_logging(cfg.paths.logs)
         if cfg.watch.low_priority:
             lower_priority()
@@ -215,6 +216,16 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
             start(load_config(config_path))
 
     start(cfg)
+    try:
+        return _menu(config_path, in_window, start, restart)
+    except KeyboardInterrupt:
+        if in_window.running:
+            ui.say("\nStopping the bot...")
+            in_window.stop()
+        return 130
+
+
+def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
     while True:
         cfg = load_config(config_path)
         running = in_window.running or service.is_running()
