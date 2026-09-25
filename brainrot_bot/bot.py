@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import shutil
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -13,17 +14,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .captions import Hook, build_ass, build_srt, make_chunks
-from .config import APP_DIR, FONTS_DIR, MODELS_DIR, WORK_DIR
+from .config import APP_DIR, FONTS_DIR, MODELS_DIR, STOP_FILE, WORK_DIR
+from .credentials import Credentials
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
-from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, MediaInfo, Tools, probe, run_ffmpeg
+from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, MediaInfo, StopRequested, Tools, probe, run_ffmpeg
 from .parts import plan_parts
 from .render import Layout, RenderJob, build_command, compute_layout
 from .state import State
 from .transcribe import Transcriber, Word
+from .uploads import PostInfo, UploadQueue, pretty_title
 
 log = logging.getLogger("brainrot")
 
 HOOK_FILES = ("title.txt", "hook.txt")
+HASHTAG_FILE = "hashtags.txt"
 MAX_HOOK_CHARS = 160
 WAIT_LOG_EVERY = 600  # seconds between "still waiting for gameplay" messages
 
@@ -34,6 +38,8 @@ class Rendered:
     srt: str | None
     segments: list
     part_suffix: str
+    title: str
+    duration: float
 
 
 def find_hook_text(clip: Path) -> str:
@@ -47,6 +53,15 @@ def find_hook_text(clip: Path) -> str:
             if text:
                 return text[:MAX_HOOK_CHARS]
     return ""
+
+
+def folder_hashtags(clip: Path) -> str:
+    """Extra hashtags for every clip in a folder, from hashtags.txt (e.g. the influencer's own tags)."""
+    path = clip.parent / HASHTAG_FILE
+    try:
+        return " ".join(path.read_text(encoding="utf-8-sig", errors="replace").split()) if path.is_file() else ""
+    except OSError:
+        return ""
 
 
 def publish(src: Path, dest: Path) -> None:
@@ -82,6 +97,20 @@ class Bot:
         )
         self._seen: dict[str, tuple[tuple[int, int], float]] = {}
         self._last_wait_log = 0.0
+        self.stop_event = threading.Event()
+        self.credentials = Credentials(cfg.paths.credentials)
+        # Test renders (--clip) are never posted.
+        self.uploads = UploadQueue(cfg, self.state, self.credentials, self._save) if persist else None
+        if self.uploads is not None:
+            self.uploads.blocked.clear()  # accounts may have been connected again since last time
+
+    def should_stop(self) -> bool:
+        return self.stop_event.is_set() or STOP_FILE.exists()
+
+    def _sleep(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not self.should_stop():
+            time.sleep(min(0.5, max(0.0, end - time.monotonic())))
 
     # ------------------------------------------------------------ watching
 
@@ -122,30 +151,41 @@ class Bot:
         return [path for _, path in sorted(ready)], settling
 
     def run_forever(self) -> None:
-        log.info("Watching %s for new clips. Press Ctrl+C to stop.", self.cfg.paths.clips)
-        while True:
+        log.info("Watching %s for new clips.", self.cfg.paths.clips)
+        while not self.should_stop():
             try:
                 ready, _ = self.scan()
                 for path in ready:
+                    if self.should_stop():
+                        break
                     self.process(path)
+                if self.uploads is not None and not self.should_stop():
+                    self.uploads.run_due(self.should_stop)
+            except StopRequested:
+                break
             except Exception:  # noqa: BLE001 - e.g. a folder that briefly can't be read; never stop the bot
                 log.exception("Unexpected problem, will keep going")
-            time.sleep(self.cfg.watch.poll_seconds)
+            self._sleep(self.cfg.watch.poll_seconds)
+        log.info("Bot stopped.")
 
     def run_once(self) -> int:
         """Process everything that is in the clips folder right now, then return."""
         done = 0
         attempted: set[Path] = set()
-        while True:
+        while not self.should_stop():
             ready, settling = self.scan()
             ready = [path for path in ready if path not in attempted]
             for path in ready:
                 attempted.add(path)
                 done += 1 if self.process(path) else 0
             if not ready and not settling:
-                return done
+                break
             if not ready:
                 time.sleep(1)
+        if self.uploads is not None:
+            while self.uploads.run_due(self.should_stop):
+                pass
+        return done
 
     def _warn_no_gameplay(self) -> None:
         if not self._last_wait_log or time.monotonic() - self._last_wait_log > WAIT_LOG_EVERY:
@@ -178,8 +218,13 @@ class Bot:
         log.info("New clip: %s", key)
         started = time.monotonic()
         try:
-            outputs = self.make_reels(clip, gameplay)
+            rendered = self.make_reels(clip, gameplay)
+        except StopRequested:
+            log.info("Stopped while working on %s; it will be done next time.", key)
+            raise
         except Exception as exc:  # noqa: BLE001 - one bad clip must never stop a 24/7 bot
+            if self.should_stop():  # e.g. ffmpeg killed by Ctrl+C: not the clip's fault
+                raise StopRequested() from exc
             attempts = int(entry.get("attempts", 0)) + 1
             entry.update(attempts=attempts, error=str(exc)[-2000:], updated=time.strftime("%Y-%m-%d %H:%M:%S"))
             if attempts >= self.cfg.watch.max_attempts:
@@ -196,11 +241,18 @@ class Bot:
             self._save()
             return []
 
+        outputs = [item.video for item in rendered]
         entry.update(
             status="done",
             outputs=[str(p) for p in outputs],
             updated=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
+        if self.uploads is not None:
+            hashtags = " ".join(x for x in (self.cfg.upload.hashtags, folder_hashtags(clip)) if x)
+            for item in rendered:
+                platforms = self.uploads.add(item.video, PostInfo(item.title, hashtags, item.duration))
+                if platforms:
+                    log.info("Queued %s for posting on %s", item.video.name, ", ".join(platforms))
         entry.pop("error", None)
         entry.pop("next_try", None)
         self.state.clips[key] = entry
@@ -212,7 +264,7 @@ class Bot:
         if self.persist:
             self.state.save()
 
-    def make_reels(self, clip: Path, gameplay: list[Footage]) -> list[Path]:
+    def make_reels(self, clip: Path, gameplay: list[Footage]) -> list[Rendered]:
         info = probe(self.tools, clip)
         if not info.has_video:
             raise MediaError("this file has no video picture")
@@ -231,11 +283,14 @@ class Bot:
             parts = plan_parts(duration, words, self.cfg.parts.max_seconds)
             layout = compute_layout(self.cfg.video, info.width, info.height)
             hook_text = find_hook_text(clip)
+            title = hook_text.splitlines()[0].strip() if hook_text else pretty_title(clip.stem)
 
             rendered = []
             for index, (start, end) in enumerate(parts, 1):
                 label = f"PART {index}/{len(parts)}" if len(parts) > 1 else ""
-                rendered.append(self._render_part(clip, info, layout, start, end, words, hook_text, label, index, len(parts), job_dir, gameplay, music))
+                item = self._render_part(clip, info, layout, start, end, words, hook_text, label, index, len(parts), job_dir, gameplay, music)
+                item.title = f"{title} (Part {index}/{len(parts)})" if len(parts) > 1 else title
+                rendered.append(item)
 
             # Everything rendered: now move the results into the output folder.
             try:
@@ -243,17 +298,16 @@ class Bot:
             except ValueError:
                 rel_dir = Path()
             out_dir = self.cfg.paths.output / rel_dir
-            outputs = []
             for item in rendered:
                 suffix = item.part_suffix + ("_preview" if self.preview_seconds else "")
                 final = unique_path(out_dir, clip.stem + suffix, ".mp4")
                 publish(item.video, final)
+                item.video = final
                 if item.srt:
                     final.with_suffix(".srt").write_text(item.srt, encoding="utf-8")
                 for seg in item.segments:
                     self.state.usage[seg.key] = self.state.usage.get(seg.key, 0) + 1
-                outputs.append(final)
-            return outputs
+            return rendered
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
 
@@ -263,10 +317,11 @@ class Bot:
             self.tools,
             ["-i", str(clip), "-t", f"{duration:.3f}", "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)],
             log_path=job_dir / "ffmpeg_audio.log",
+            should_stop=self.should_stop,
         )
         log.info("Listening to the clip to write captions...")
         assert self.transcriber is not None
-        return self.transcriber.transcribe(wav)
+        return self.transcriber.transcribe(wav, self.should_stop)
 
     def _render_part(
         self,
@@ -338,6 +393,7 @@ class Bot:
             cwd=APP_DIR,
             duration=length,
             label=f"  rendering{part_text}:",
+            should_stop=self.should_stop,
         )
         srt = build_srt(part_words) if cfg.captions.enabled and cfg.captions.save_srt and part_words else None
-        return Rendered(job.output, srt, segments, f"_part{index}" if total_parts > 1 else "")
+        return Rendered(job.output, srt, segments, f"_part{index}" if total_parts > 1 else "", "", length)

@@ -1,0 +1,141 @@
+name: Windows app
+
+# Builds BrainrotBot.exe (with ffmpeg included), tests the finished app on Windows,
+# and attaches BrainrotBot-windows.zip to a GitHub Release when a tag like v1.1.0 is pushed.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: Download ffmpeg (with caption support)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force ffmpeg_dl | Out-Null
+          $asset = $null
+          try {
+            $names = gh release view latest -R BtbN/FFmpeg-Builds --json assets -q '.assets[].name'
+            $asset = $names | Where-Object { $_ -match '^ffmpeg-n\d+\.\d+-latest-win64-gpl-\d+\.\d+\.zip$' } |
+              Sort-Object { [version]($_ -replace '^ffmpeg-n(\d+\.\d+).*$', '$1') } | Select-Object -Last 1
+          } catch { Write-Host "BtbN lookup failed: $_" }
+          if ($asset) {
+            Write-Host "Using $asset"
+            gh release download latest -R BtbN/FFmpeg-Builds -p $asset -D ffmpeg_dl
+            $zip = "ffmpeg_dl/$asset"
+          } else {
+            Write-Host "Falling back to the gyan.dev full build"
+            Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.zip -OutFile ffmpeg_dl/ffmpeg.zip
+            $zip = "ffmpeg_dl/ffmpeg.zip"
+          }
+          Expand-Archive $zip -DestinationPath ffmpeg_dl/x
+          $bin = (Get-ChildItem ffmpeg_dl/x -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          & "$bin/ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          "FFMPEG_BIN=$bin" >> $env:GITHUB_ENV
+          $bin >> $env:GITHUB_PATH
+
+      - name: Run the tests on Windows
+        run: python -m pytest -q
+
+      - name: Build the app
+        run: pyinstaller packaging/brainrot.spec --noconfirm
+
+      - name: Add ffmpeg and docs
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = "dist/BrainrotBot"
+          New-Item -ItemType Directory -Force "$app/ffmpeg" | Out-Null
+          Copy-Item "$env:FFMPEG_BIN/ffmpeg.exe", "$env:FFMPEG_BIN/ffprobe.exe" "$app/ffmpeg/"
+          $license = Get-ChildItem ffmpeg_dl/x -Recurse -Filter "LICENSE*" | Select-Object -First 1
+          if ($license) { Copy-Item $license.FullName "$app/ffmpeg/LICENSE.txt" }
+          Copy-Item packaging/README.txt, packaging/THIRD_PARTY_NOTICES.txt "$app/"
+          Get-ChildItem $app | Format-Table Name, Length
+
+      - name: Test the finished app
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Work on a copy so the zip stays clean (no config, logs or models from the test).
+          Copy-Item -Recurse dist/BrainrotBot test_app
+          $exe = Resolve-Path test_app/BrainrotBot.exe
+          $ci = New-Item -ItemType Directory -Force ci
+          $ff = "test_app/ffmpeg/ffmpeg.exe"
+
+          Write-Host "== self-test"
+          & $exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
+
+          Write-Host "== test media"
+          powershell -NoProfile -Command "try { Add-Type -AssemblyName System.Speech; `$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; `$s.SetOutputToWaveFile('$($ci.FullName)\speech.wav'); `$s.Speak('Why do cats always land on their feet? It is called the righting reflex. They twist in the air in less than a second.'); `$s.Dispose() } catch { Write-Host `"no speech voice: `$_`" }"
+          if (Test-Path ci/speech.wav) { $audio = @("-i", "ci/speech.wav") } else { $audio = @("-f", "lavfi", "-t", "8", "-i", "sine=f=300") }
+          & $ff -hide_banner -loglevel error -y -f lavfi -i "testsrc2=s=1280x720:r=30" @audio -shortest -c:v libx264 -preset ultrafast -c:a aac ci/clip.mp4
+          New-Item -ItemType Directory -Force ci/gameplay | Out-Null
+          & $ff -hide_banner -loglevel error -y -f lavfi -i "testsrc=s=1920x1080:r=30" -t 40 -c:v libx264 -preset ultrafast ci/gameplay/run.mp4
+          "captions:`n  model: tiny`nvideo:`n  preset: veryfast`napp:`n  setup_done: true`n" | Set-Content -Encoding utf8 ci/config.yaml
+
+          Write-Host "== check"
+          & $exe --config ci/config.yaml --check
+          if ($LASTEXITCODE -ne 0) { throw "check failed" }
+
+          Write-Host "== render one clip (downloads the tiny speech model)"
+          & $exe --config ci/config.yaml --clip ci/clip.mp4
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path ci/output/clip.mp4)) { throw "render failed" }
+          & test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration:stream=width,height -of compact ci/output/clip.mp4
+          if (Test-Path ci/output/clip.srt) { Get-Content ci/output/clip.srt | Select-Object -First 8 }
+
+          Write-Host "== setup wizard + background bot"
+          $wiz = New-Item -ItemType Directory -Force ci/wiz
+          (Get-Content test_app/_internal/config.yaml) -replace '^  model: small', '  model: tiny' | Set-Content -Encoding utf8 ci/wiz/config.yaml
+          $answers = @("1", "n", "n", "n", "n", "n", "$($wiz.FullName)\Gameplay", "$($wiz.FullName)\Clips", "$($wiz.FullName)\Reels", "n", "0") -join "`n"
+          $answers | & $exe --config ci/wiz/config.yaml
+          & $exe --status
+          Copy-Item ci/gameplay/run.mp4 "$($wiz.FullName)\Gameplay\"
+          New-Item -ItemType Directory -Force "$($wiz.FullName)\Clips\Cat Facts" | Out-Null
+          Copy-Item ci/clip.mp4 "$($wiz.FullName)\Clips\Cat Facts\cats.mp4"
+          $reel = "$($wiz.FullName)\Reels\Cat Facts\cats.mp4"
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $reel); $i++) { Start-Sleep 5 }
+          Get-Content "$($wiz.FullName)\logs\bot.log" -Tail 15
+          & $exe --stop
+          if (-not (Test-Path $reel)) { throw "the background bot didn't make the reel" }
+          Write-Host "APP TEST PASSED"
+
+      - name: Zip
+        run: Compress-Archive -Path dist/BrainrotBot -DestinationPath BrainrotBot-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BrainrotBot-windows
+          path: BrainrotBot-windows.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BrainrotBot-windows.zip
+          body: |
+            **Download `BrainrotBot-windows.zip`**, unzip it, and double-click `BrainrotBot.exe`.
+            Windows may warn that the app isn't signed: click "More info" > "Run anyway".

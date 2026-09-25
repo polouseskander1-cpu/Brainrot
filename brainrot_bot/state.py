@@ -15,7 +15,16 @@ log = logging.getLogger("brainrot")
 class State:
     def __init__(self, path: Path):
         self.path = path
-        self.data: dict = {"version": 1, "clips": {}, "gameplay_usage": {}, "gameplay_cache": {}, "music_cache": {}}
+        self.data: dict = {
+            "version": 1,
+            "clips": {},
+            "gameplay_usage": {},
+            "gameplay_cache": {},
+            "music_cache": {},
+            "uploads": {},
+            "upload_blocked": {},
+            "last_post": {},
+        }
         if path.exists():
             try:
                 loaded = json.loads(path.read_text(encoding="utf-8"))

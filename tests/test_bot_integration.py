@@ -41,7 +41,7 @@ class FakeTranscriber:
     def load(self):
         pass
 
-    def transcribe(self, wav):
+    def transcribe(self, wav, should_stop=None):
         assert wav.exists()
         self.calls += 1
         return list(self.words)

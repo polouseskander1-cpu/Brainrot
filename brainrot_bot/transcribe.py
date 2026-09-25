@@ -6,13 +6,16 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
+
+from .media import StopRequested
 
 # Windows without "developer mode" can't make symlinks; the model download works anyway, so skip the warning.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+# The model download site prints "set a HF_TOKEN" / "install hf_xet" notices that don't apply to this bot.
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 
 log = logging.getLogger("brainrot")
-# The model download site prints "set a HF_TOKEN" notices that don't apply to this bot.
-logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 
 @dataclass
@@ -74,10 +77,12 @@ class Transcriber:
                 self.device = "cpu"
                 self._model = self._create("cpu")
 
-    def transcribe(self, audio_path: Path) -> list[Word]:
+    def transcribe(self, audio_path: Path, should_stop: Callable[[], bool] | None = None) -> list[Word]:
         self.load()
         try:
-            return self._run(audio_path)
+            return self._run(audio_path, should_stop)
+        except StopRequested:
+            raise
         except Exception as exc:
             if self.device == "cpu":
                 raise
@@ -85,9 +90,9 @@ class Transcriber:
             log.warning("Speech-to-text failed on the GPU (%s). Retrying on the CPU.", exc)
             self.device = "cpu"
             self._model = self._create("cpu")
-            return self._run(audio_path)
+            return self._run(audio_path, should_stop)
 
-    def _run(self, audio_path: Path) -> list[Word]:
+    def _run(self, audio_path: Path, should_stop: Callable[[], bool] | None = None) -> list[Word]:
         segments, info = self._model.transcribe(
             str(audio_path),
             language=self.language,
@@ -98,6 +103,8 @@ class Transcriber:
         )
         words: list[Word] = []
         for segment in segments:  # the actual work happens while iterating
+            if should_stop is not None and should_stop():
+                raise StopRequested()
             for w in segment.words or []:
                 if w.word and w.word.strip():
                     words.append(Word(w.word.strip(), float(w.start), float(w.end)))

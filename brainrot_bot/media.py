@@ -30,9 +30,22 @@ class MediaError(Exception):
     """ffmpeg/ffprobe failed or a file is unusable."""
 
 
+class StopRequested(Exception):
+    """The bot was asked to stop (menu, Ctrl+C, shutdown). Not a failure of the clip."""
+
+
+def _has_console() -> bool:
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.kernel32.GetConsoleWindow())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def popen_kwargs() -> dict:
-    """Keep ffmpeg from flashing console windows when the bot runs in the background on Windows."""
-    if os.name == "nt":
+    """On Windows, keep ffmpeg from opening console windows when the bot runs in the background."""
+    if os.name == "nt" and not _has_console():
         return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
     return {}
 
@@ -249,6 +262,7 @@ def run_ffmpeg(
     duration: float = 0.0,
     label: str = "",
     on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Run ffmpeg, log progress every ~10%, raise MediaError with ffmpeg's own error text on failure."""
     cmd = [tools.ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats", *args]
@@ -268,14 +282,19 @@ def run_ffmpeg(
         )
         last_activity = [time.monotonic()]
         stalled = threading.Event()
+        stopped = threading.Event()
 
         def watchdog() -> None:
             while proc.poll() is None:
+                if should_stop is not None and should_stop():
+                    stopped.set()
+                    proc.kill()
+                    return
                 if time.monotonic() - last_activity[0] > STALL_TIMEOUT:
                     stalled.set()
                     proc.kill()
                     return
-                time.sleep(2)
+                time.sleep(0.5)
 
         threading.Thread(target=watchdog, daemon=True).start()
 
@@ -299,6 +318,8 @@ def run_ffmpeg(
             proc.wait()
             raise
 
+    if stopped.is_set():
+        raise StopRequested()
     if stalled.is_set():
         raise MediaError(f"ffmpeg stopped making progress for {STALL_TIMEOUT // 60} minutes and was stopped")
     if code != 0:

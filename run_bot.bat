@@ -8,7 +8,7 @@ set "PY=python"
 where py >nul 2>nul && set "PY=py -3"
 
 :loop
-%PY% brainrot.py %*
+%PY% brainrot.py --run %*
 set "CODE=%errorlevel%"
 REM 0 = finished, 2 = setup problem, 3 = already running, 130 = you stopped it
 if "%CODE%"=="0" goto end

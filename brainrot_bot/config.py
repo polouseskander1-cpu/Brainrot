@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,11 +15,18 @@ import yaml
 
 log = logging.getLogger("brainrot")
 
-APP_DIR = Path(__file__).resolve().parent.parent
-FONTS_DIR = APP_DIR / "fonts"
+# When packaged as BrainrotBot.exe (PyInstaller), writable files live next to the exe and the
+# bundled read-only files (fonts, default config) live in the unpacked bundle folder.
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)).resolve()
+FONTS_DIR = RESOURCE_DIR / "fonts"
 WORK_DIR = APP_DIR / ".work"
 MODELS_DIR = APP_DIR / "models"
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
+STOP_FILE = APP_DIR / ".stop"
+LOCK_FILE = APP_DIR / ".bot.lock"
+PID_FILE = APP_DIR / ".bot.pid"
 
 DEFAULTS: dict[str, Any] = {
     "folders": {
@@ -94,6 +103,26 @@ DEFAULTS: dict[str, Any] = {
     },
     "parts": {
         "max_seconds": 0,
+    },
+    "app": {
+        "run_mode": "background",
+        "autostart": False,
+        "autostart_delay": 15,
+        "setup_done": False,
+    },
+    "upload": {
+        "youtube": False,
+        "tiktok": False,
+        "instagram": False,
+        "facebook": False,
+        "hours_between_posts": 3,
+        "hashtags": "#fyp #viral #podcast",
+        "youtube_privacy": "public",
+        "youtube_category": 24,
+        "tiktok_mode": "draft",
+        "tiktok_privacy": "PUBLIC_TO_EVERYONE",
+        "tiktok_redirect_port": 8765,
+        "meta_api_version": "v25.0",
     },
     "tools": {
         "ffmpeg": "",
@@ -234,6 +263,35 @@ def _validate(c: dict) -> None:
     t["ffmpeg"] = str(t["ffmpeg"] or "").strip()
     t["ffprobe"] = str(t["ffprobe"] or "").strip()
 
+    app = c["app"]
+    app["run_mode"] = _choice("app.run_mode", app["run_mode"], ("background", "window"))
+    app["autostart"] = bool(app["autostart"])
+    app["autostart_delay"] = _num("app.autostart_delay", app["autostart_delay"], 0, 600)
+    app["setup_done"] = bool(app["setup_done"])
+
+    up = c["upload"]
+    for platform in ("youtube", "tiktok", "instagram", "facebook"):
+        up[platform] = bool(up[platform])
+    up["hours_between_posts"] = _num("upload.hours_between_posts", up["hours_between_posts"], 0, 168)
+    up["hashtags"] = str(up["hashtags"] or "").strip()
+    up["youtube_privacy"] = _choice("upload.youtube_privacy", up["youtube_privacy"], ("public", "unlisted", "private"))
+    up["youtube_category"] = _num("upload.youtube_category", up["youtube_category"], 1, 100, integer=True)
+    up["tiktok_mode"] = _choice("upload.tiktok_mode", up["tiktok_mode"], ("draft", "direct"))
+    up["tiktok_privacy"] = str(up["tiktok_privacy"]).strip().upper()
+    if up["tiktok_privacy"] not in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"):
+        raise ConfigError("'upload.tiktok_privacy' must be PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR or SELF_ONLY")
+    up["tiktok_redirect_port"] = _num("upload.tiktok_redirect_port", up["tiktok_redirect_port"], 1024, 65535, integer=True)
+    up["meta_api_version"] = str(up["meta_api_version"]).strip()
+    if not re.fullmatch(r"v\d+\.\d+", up["meta_api_version"]):
+        raise ConfigError("'upload.meta_api_version' must look like v25.0")
+
+
+def ensure_config_file() -> None:
+    """The .exe ships a default config.yaml inside its bundle; put an editable copy next to the exe."""
+    bundled = RESOURCE_DIR / "config.yaml"
+    if not DEFAULT_CONFIG_PATH.exists() and bundled.exists() and bundled != DEFAULT_CONFIG_PATH:
+        shutil.copyfile(bundled, DEFAULT_CONFIG_PATH)
+
 
 def load_config(path: Path | None = None) -> SimpleNamespace:
     """Read config.yaml (if present) on top of the defaults.
@@ -273,6 +331,68 @@ def load_config(path: Path | None = None) -> SimpleNamespace:
         music=resolve(merged["folders"]["music"]),
         output=resolve(merged["folders"]["output"]),
         state_file=base / "bot_state.json",
+        credentials=base / "credentials",
         logs=base / "logs",
     )
     return cfg
+
+
+# ---------------------------------------------------------------- editing config.yaml in place
+
+
+def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    text = str(value)
+    plain = re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", text) and text.lower() not in ("true", "false", "yes", "no", "on", "off", "null")
+    return text if plain else "'" + text.replace("'", "''") + "'"
+
+
+def _split_comment(rest: str) -> tuple[str, str]:
+    """'value   # comment' -> ('value', '   # comment'), ignoring # inside quotes."""
+    quote = None
+    for i, ch in enumerate(rest):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or rest[i - 1] in " \t"):
+            j = i
+            while j > 0 and rest[j - 1] in " \t":
+                j -= 1
+            return rest[:j], rest[j:]
+    return rest.rstrip(), ""
+
+
+def update_config_file(path: Path, updates: dict[str, dict[str, Any]]) -> None:
+    """Change a few settings in config.yaml while keeping every other line and comment as it is."""
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    for section, values in updates.items():
+        start = next((i for i, line in enumerate(lines) if re.match(rf"^{re.escape(section)}:\s*(#.*)?$", line)), None)
+        if start is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(f"{section}:")
+            start = len(lines) - 1
+        end = start + 1
+        while end < len(lines) and (not lines[end].strip() or lines[end].startswith((" ", "\t", "#"))):
+            end += 1
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1  # keep blank lines between sections outside this block
+        for key, value in values.items():
+            pattern = re.compile(rf"^(\s+){re.escape(key)}:(\s*)(.*)$")
+            for i in range(start + 1, end):
+                match = pattern.match(lines[i])
+                if match and not lines[i].lstrip().startswith("#"):
+                    _, comment = _split_comment(match.group(3))
+                    lines[i] = f"{match.group(1)}{key}: {_yaml_scalar(value)}{comment}"
+                    break
+            else:
+                lines.insert(end, f"  {key}: {_yaml_scalar(value)}")
+                end += 1
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

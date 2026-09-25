@@ -1,0 +1,23 @@
+Brainrot Bot includes the following third-party software. Thank you to their authors.
+
+FFmpeg (ffmpeg/ffmpeg.exe, ffmpeg/ffprobe.exe)
+  Windows build from https://github.com/BtbN/FFmpeg-Builds (GPL build), licensed under the
+  GNU General Public License version 3 (see ffmpeg/LICENSE.txt when present).
+  Source code: https://github.com/FFmpeg/FFmpeg and build scripts: https://github.com/BtbN/FFmpeg-Builds
+  FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+Montserrat font (_internal/fonts/Montserrat-Black.ttf)
+  Copyright The Montserrat Project Authors. SIL Open Font License 1.1 (_internal/fonts/OFL-Montserrat.txt).
+
+Python and its standard library - Python Software Foundation License
+faster-whisper - MIT License (SYSTRAN)
+CTranslate2 - MIT License (OpenNMT)
+PyAV - BSD License
+ONNX Runtime - MIT License (Microsoft)
+tokenizers, huggingface_hub - Apache License 2.0 (Hugging Face)
+NumPy - BSD License
+PyYAML - MIT License
+tqdm - MPL-2.0 / MIT License
+
+The Whisper speech-recognition models are downloaded on first use (not included); they are
+released under the MIT License by OpenAI, converted by SYSTRAN.

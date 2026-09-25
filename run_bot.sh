@@ -6,7 +6,7 @@ PY=python3
 command -v python3 >/dev/null 2>&1 || PY=python
 
 while true; do
-    "$PY" brainrot.py "$@"
+    "$PY" brainrot.py --run "$@"
     code=$?
     # 0 = finished, 2 = setup problem, 3 = already running, 130 = you stopped it
     case $code in

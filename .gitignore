@@ -8,12 +8,21 @@ music/*
 output/*
 !output/README.txt
 
-# Created by the bot while it runs
-.work/
-.bot.lock
-models/
-logs/
-bot_state*.json*
+# Created by the bot while it runs (next to config.yaml)
+/.work/
+/.bot.lock
+/.bot.pid
+/.stop
+/models/
+/logs/
+/bot_state*.json*
+/credentials.dat*
+/credentials.json*
+
+# Windows app build
+/build/
+/dist/
+/ffmpeg/
 
 # Python
 __pycache__/
