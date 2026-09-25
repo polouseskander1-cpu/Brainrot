@@ -20,6 +20,9 @@ video:
   top_ratio: 0.3333     # the clip gets the top third, the gameplay the bottom two thirds
   snap_top: true        # if the clip almost fits the top area (16:9 clips do), size the area to fit it exactly
   top_fill: blur        # what fills empty space around a clip that doesn't fill its area: blur or black
+  layout: split         # split = clip on top, gameplay below | floating = gameplay full screen, clip as a card on top
+                        # fullscreen = only the clip, cropped to follow the speaker's face
+                        # side = clip left, gameplay right (for landscape videos: set width 1920 and height 1080)
   codec: libx264        # h264_nvenc (NVIDIA), h264_videotoolbox (Mac) or h264_qsv (Intel) render faster
   crf: 19               # libx264 quality: lower = better quality, bigger file (18-23 is a good range)
   preset: medium        # libx264 speed: faster / medium / slow
@@ -34,6 +37,7 @@ gameplay:
 
 captions:
   enabled: true
+  style: classic        # classic (the look below) | hormozi | mrbeast | minimal | karaoke - other styles replace the look settings
   model: small          # speech model: tiny, base, small, medium, large-v3, turbo (bigger = more accurate, slower)
   language: auto        # auto, or a code like en, ar, fr, es, de
   device: auto          # auto uses an NVIDIA GPU if one works, otherwise the CPU
@@ -53,7 +57,23 @@ captions:
   position: 0.5         # height on screen: 0 = top, 0.5 = middle, 1 = bottom
   animation: pop        # pop = each caption bounces in, none = no animation
   highlight_color: ""   # e.g. "#00FF66" to color the word being spoken right now. Empty = off.
+  keyword_color: "#39FF6A"  # important words (money, numbers, "never", "secret"...) in this color. Empty = off.
   save_srt: true        # also save a normal .srt subtitle file next to each reel (for YouTube uploads)
+
+edit:
+  cut_silences: true    # remove pauses: silences longer than max_pause are cut (laughter and reactions are kept)
+  max_pause: 0.45
+  zoom: true            # quick punch-in zooms on the most important moments
+  zoom_amount: 1.15
+  face_tracking: true   # zooms (and the fullscreen layout) aim at the speaker's face
+  sfx: true             # whoosh on zooms, "boom" on punchlines, pop on emojis
+  sfx_volume: 0.6
+  emojis: true          # an emoji above the caption when a word matches (money -> 💰, fire -> 🔥 ...)
+  emoji_size: 150
+  censor: false         # hide swear words: bleep in the audio and F*** in the captions
+  censor_words: []      # extra words to hide, e.g. ["word1", "word2"]
+  censor_mode: bleep    # bleep or mute
+  thumbnail: true       # save a cover picture (.jpg) next to every reel
 
 hook:
   # A title box at the start of the reel. Text comes from a .txt file with the same name as the clip
@@ -74,6 +94,7 @@ audio:
   normalize: true       # make every reel equally loud (like the big accounts do)
   loudness: -14         # LUFS. -14 is what TikTok / YouTube / Instagram aim for.
   music_volume: 0.12    # background music level (only used if the music folder has tracks)
+  music_duck: true      # music gets quieter while someone talks
 
 parts:
   max_seconds: 0        # 0 = off. e.g. 90: longer clips are cut at pauses into Part 1/2/3 reels of at most 90s

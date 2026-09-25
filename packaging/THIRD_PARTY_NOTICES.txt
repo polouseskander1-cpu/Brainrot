@@ -8,6 +8,16 @@ FFmpeg (ffmpeg/ffmpeg.exe, ffmpeg/ffprobe.exe)
 
 Montserrat font (_internal/fonts/Montserrat-Black.ttf)
   Copyright The Montserrat Project Authors. SIL Open Font License 1.1 (_internal/fonts/OFL-Montserrat.txt).
+Poppins font (_internal/fonts/Poppins-SemiBold.ttf)
+  Copyright 2020 The Poppins Project Authors. SIL Open Font License 1.1 (_internal/fonts/OFL-Poppins.txt).
+Cairo font (_internal/fonts/Cairo-Black.ttf, Arabic captions)
+  Copyright 2009 The Cairo Project Authors. SIL Open Font License 1.1 (_internal/fonts/OFL-Cairo.txt).
+Luckiest Guy font (_internal/fonts/LuckiestGuy-Regular.ttf)
+  By Astigmatic. Apache License 2.0 (_internal/fonts/LICENSE-LuckiestGuy.txt).
+Noto Emoji pictures (_internal/assets/emoji)
+  By Google, https://github.com/googlefonts/noto-emoji. Apache License 2.0 (_internal/assets/emoji/LICENSE.txt).
+Ultra-Light-Fast-Generic-Face-Detector-1MB (_internal/assets/models/ultraface-rfb-320.onnx)
+  Copyright (c) 2019 linzai. MIT License (_internal/assets/models/LICENSE-ultraface.txt).
 
 Python and its standard library - Python Software Foundation License
 faster-whisper - MIT License (SYSTRAN)

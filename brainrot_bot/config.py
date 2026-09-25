@@ -48,6 +48,7 @@ DEFAULTS: dict[str, Any] = {
         "top_ratio": 1 / 3,
         "snap_top": True,
         "top_fill": "blur",
+        "layout": "split",
         "codec": "libx264",
         "crf": 19,
         "preset": "medium",
@@ -62,6 +63,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "captions": {
         "enabled": True,
+        "style": "classic",
         "model": "small",
         "language": "auto",
         "device": "auto",
@@ -81,7 +83,23 @@ DEFAULTS: dict[str, Any] = {
         "position": 0.5,
         "animation": "pop",
         "highlight_color": "",
+        "keyword_color": "#39FF6A",
         "save_srt": True,
+    },
+    "edit": {
+        "cut_silences": True,
+        "max_pause": 0.45,
+        "zoom": True,
+        "zoom_amount": 1.15,
+        "face_tracking": True,
+        "sfx": True,
+        "sfx_volume": 0.6,
+        "emojis": True,
+        "emoji_size": 150,
+        "censor": False,
+        "censor_words": [],
+        "censor_mode": "bleep",
+        "thumbnail": True,
     },
     "hook": {
         "enabled": True,
@@ -100,6 +118,7 @@ DEFAULTS: dict[str, Any] = {
         "normalize": True,
         "loudness": -14,
         "music_volume": 0.12,
+        "music_duck": True,
     },
     "parts": {
         "max_seconds": 0,
@@ -197,6 +216,10 @@ def _validate(c: dict) -> None:
     v["top_ratio"] = _num("video.top_ratio", v["top_ratio"], 0.1, 0.9)
     v["snap_top"] = bool(v["snap_top"])
     v["top_fill"] = _choice("video.top_fill", v["top_fill"], ("blur", "black"))
+    v["layout"] = _choice("video.layout", v["layout"], ("split", "floating", "fullscreen", "side"))
+    if v["layout"] == "side" and v["height"] > v["width"]:
+        log.warning("video.layout 'side' puts the clip and the gameplay next to each other; it is made for "
+                    "landscape videos (video.width: 1920, video.height: 1080).")
     v["crf"] = _num("video.crf", v["crf"], 0, 51, integer=True)
     v["codec"] = str(v["codec"]).strip()
     v["preset"] = str(v["preset"]).strip()
@@ -232,8 +255,24 @@ def _validate(c: dict) -> None:
     cap["shadow_offset"] = _num("captions.shadow_offset", cap["shadow_offset"], 0, 50)
     cap["shadow_blur"] = _num("captions.shadow_blur", cap["shadow_blur"], 0, 50)
     cap["position"] = _num("captions.position", cap["position"], 0.05, 0.95)
-    cap["animation"] = _choice("captions.animation", cap["animation"], ("pop", "none"))
+    cap["animation"] = _choice("captions.animation", cap["animation"], ("pop", "bounce", "fade", "karaoke", "none"))
     cap["highlight_color"] = _check_color("captions.highlight_color", cap["highlight_color"], allow_empty=True)
+    cap["keyword_color"] = _check_color("captions.keyword_color", cap["keyword_color"], allow_empty=True)
+    from .styles import PRESETS
+
+    cap["style"] = _choice("captions.style", cap["style"], tuple(PRESETS))
+
+    e = c["edit"]
+    for key in ("cut_silences", "zoom", "face_tracking", "sfx", "emojis", "censor", "thumbnail"):
+        e[key] = bool(e[key])
+    e["max_pause"] = _num("edit.max_pause", e["max_pause"], 0.1, 5)
+    e["zoom_amount"] = _num("edit.zoom_amount", e["zoom_amount"], 1.02, 2.0)
+    e["sfx_volume"] = _num("edit.sfx_volume", e["sfx_volume"], 0, 2)
+    e["emoji_size"] = _num("edit.emoji_size", e["emoji_size"], 40, 600, integer=True) // 2 * 2
+    if not isinstance(e["censor_words"], list):
+        raise ConfigError("'edit.censor_words' must be a list, e.g. [\"word1\", \"word2\"]")
+    e["censor_words"] = [str(w).strip().lower() for w in e["censor_words"] if str(w).strip()]
+    e["censor_mode"] = _choice("edit.censor_mode", e["censor_mode"], ("bleep", "mute"))
     cap["save_srt"] = bool(cap["save_srt"])
 
     h = c["hook"]
@@ -253,6 +292,7 @@ def _validate(c: dict) -> None:
     a["normalize"] = bool(a["normalize"])
     a["loudness"] = _num("audio.loudness", a["loudness"], -40, -5)
     a["music_volume"] = _num("audio.music_volume", a["music_volume"], 0, 2)
+    a["music_duck"] = bool(a["music_duck"])
 
     parts = c["parts"]
     parts["max_seconds"] = _num("parts.max_seconds", parts["max_seconds"] or 0, 0, 36000)

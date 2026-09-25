@@ -42,6 +42,23 @@ def _speech_engine():
     return ", ".join(sorted(types))
 
 
+def _editing():
+    import numpy as np
+
+    from .analysis import EMOJI_WORDS, emoji_path
+    from .faces import FaceFinder
+    from .sfx import SoundEvent, write_track
+
+    missing = [code for code in EMOJI_WORDS if not emoji_path(code).exists()]
+    assert not missing, f"emoji pictures missing: {missing}"
+    finder = FaceFinder()
+    assert finder.detect(np.zeros((240, 320, 3), dtype=np.uint8)) == [], "face found in an empty picture"
+    with tempfile.TemporaryDirectory() as tmp:
+        track = write_track([SoundEvent("whoosh", 0.1), SoundEvent("boom", 0.5), SoundEvent("bleep", 1.0, 0.3)], 2.0, Path(tmp) / "sfx.wav")
+        assert track.stat().st_size > 300_000, "sound effects track too small"
+    return f"{len(EMOJI_WORDS)} emojis, face model, sound effects"
+
+
 def _credentials():
     with tempfile.TemporaryDirectory() as tmp:
         store = Credentials(Path(tmp) / "credentials")
@@ -100,6 +117,7 @@ def run() -> int:
     results = [
         _check("ffmpeg with captions + x264", _tools),
         _check("speech-to-text engine", _speech_engine),
+        _check("editing (emojis, faces, sounds)", _editing),
         _check("credential storage", _credentials),
         _check("start at login", _autostart),
         _check("background start/stop", _background),

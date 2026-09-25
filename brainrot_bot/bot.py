@@ -13,14 +13,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
-from .captions import Hook, build_ass, build_srt, make_chunks
+from .analysis import Loudness
+from .captions import Hook, build_ass, build_srt
 from .config import APP_DIR, FONTS_DIR, MODELS_DIR, STOP_FILE, WORK_DIR
 from .credentials import Credentials
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, MediaInfo, StopRequested, Tools, probe, run_ffmpeg
+from .editor import plan_edit
+from .faces import find_faces
 from .parts import plan_parts
 from .render import Layout, RenderJob, build_command, compute_layout
+from .sfx import write_track
 from .state import State
+from .thumbnail import make_cover
 from .transcribe import Transcriber, Word
 from .uploads import PostInfo, UploadQueue, pretty_title
 
@@ -40,6 +45,7 @@ class Rendered:
     part_suffix: str
     title: str
     duration: float
+    cover: Path | None = None
 
 
 def find_hook_text(clip: Path) -> str:
@@ -278,8 +284,13 @@ class Bot:
         job_dir.mkdir(parents=True, exist_ok=True)
         try:
             words: list[Word] = []
-            if self.transcriber is not None and info.has_audio:
-                words = self._transcribe(clip, duration, job_dir)
+            loudness = None
+            if info.has_audio:
+                wav = self._extract_voice(clip, duration, job_dir)
+                loudness = Loudness.from_wav(wav)
+                if self.transcriber is not None:
+                    log.info("Listening to the clip to write captions...")
+                    words = self.transcriber.transcribe(wav, self.should_stop)
             parts = plan_parts(duration, words, self.cfg.parts.max_seconds)
             layout = compute_layout(self.cfg.video, info.width, info.height)
             hook_text = find_hook_text(clip)
@@ -288,9 +299,11 @@ class Bot:
             rendered = []
             for index, (start, end) in enumerate(parts, 1):
                 label = f"PART {index}/{len(parts)}" if len(parts) > 1 else ""
-                item = self._render_part(clip, info, layout, start, end, words, hook_text, label, index, len(parts), job_dir, gameplay, music)
-                item.title = f"{title} (Part {index}/{len(parts)})" if len(parts) > 1 else title
-                rendered.append(item)
+                reel_title = f"{title} (Part {index}/{len(parts)})" if len(parts) > 1 else title
+                rendered.append(self._render_part(
+                    clip, info, layout, start, end, words, loudness, hook_text, label, index, len(parts), job_dir,
+                    gameplay, music, reel_title,
+                ))
 
             # Everything rendered: now move the results into the output folder.
             try:
@@ -305,13 +318,49 @@ class Bot:
                 item.video = final
                 if item.srt:
                     final.with_suffix(".srt").write_text(item.srt, encoding="utf-8")
+                if item.cover is not None and item.cover.exists():
+                    publish(item.cover, final.with_suffix(".jpg"))
+                    item.cover = final.with_suffix(".jpg")
                 for seg in item.segments:
                     self.state.usage[seg.key] = self.state.usage.get(seg.key, 0) + 1
             return rendered
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
 
-    def _transcribe(self, clip: Path, duration: float, job_dir: Path) -> list[Word]:
+    def _clean_frame(self, job: RenderJob, plan, out: Path) -> Path:
+        """The reel's picture at the cover moment, without captions or emojis (so the title fits)."""
+        from copy import deepcopy
+
+        at = plan.cover_at
+        fps = job.layout.fps
+        # Which moment of the clip, and of the gameplay, is on screen at that time.
+        offset, source = 0.0, job.kept()[0][0]
+        for a, b in job.kept():
+            if at < offset + (b - a):
+                source = a + (at - offset)
+                break
+            offset += b - a
+        segments, elapsed = [], 0.0
+        for seg in job.segments:
+            if at < elapsed + seg.duration:
+                segments = [type(seg)(seg.path, seg.key, seg.start + (at - elapsed), 1.0)]
+                break
+            elapsed += seg.duration
+        if job.segments and not segments:
+            segments = [job.segments[-1]]
+        still = deepcopy(job)
+        still.intervals = [(source, source + 2 / fps)]
+        still.segments, still.output, still.ass_file = segments, out, None
+        still.emojis, still.sfx_track, still.music, still.mute = [], None, None, []
+        still.zooms = [type(z)(0.0, 1.0, z.cx, z.cy) for z in job.zooms if z.start <= at < z.end]
+        still.reframe = [(0.0, cx) for t, cx in job.reframe if t <= at][-1:] or job.reframe[:1]
+        cfg = deepcopy(self.cfg)
+        cfg.progress_bar.enabled = False
+        run_ffmpeg(self.tools, build_command(still, cfg), log_path=out.with_suffix(".log"), cwd=APP_DIR)
+        return out
+
+    def _extract_voice(self, clip: Path, duration: float, job_dir: Path) -> Path:
+        """16 kHz mono copy of the sound: what speech recognition and the loudness analysis read."""
         wav = job_dir / "voice.wav"
         run_ffmpeg(
             self.tools,
@@ -319,9 +368,7 @@ class Bot:
             log_path=job_dir / "ffmpeg_audio.log",
             should_stop=self.should_stop,
         )
-        log.info("Listening to the clip to write captions...")
-        assert self.transcriber is not None
-        return self.transcriber.transcribe(wav, self.should_stop)
+        return wav
 
     def _render_part(
         self,
@@ -331,6 +378,7 @@ class Bot:
         start: float,
         end: float,
         words: list[Word],
+        loudness: Loudness | None,
         hook_text: str,
         part_label: str,
         index: int,
@@ -338,35 +386,34 @@ class Bot:
         job_dir: Path,
         gameplay: list[Footage],
         music: list[Footage],
+        title: str,
     ) -> Rendered:
         cfg = self.cfg
-        length = end - start
-        part_words = [Word(w.text, w.start - start, min(w.end, end) - start) for w in words if start <= w.start < end]
-        segments = plan_segments(gameplay, length, self.state.usage, self.rng, cfg.gameplay.skip_start, cfg.gameplay.skip_end)
+        edit = cfg.edit
+        faces = []
+        if edit.face_tracking and (edit.zoom or layout.mode == "fullscreen"):
+            faces = find_faces(self.tools, clip, start, end - start)
+        plan = plan_edit(cfg, layout, start, end, words, loudness, faces)
+        length = plan.duration
+        segments = plan_segments(gameplay, length, self.state.usage, self.rng, cfg.gameplay.skip_start, cfg.gameplay.skip_end) if layout.game_box else []
 
         hook = None
         hook_lines = "\n".join(x for x in (hook_text, part_label) if x)
         if cfg.hook.enabled and hook_lines:
-            hook = Hook(hook_lines, layout.top_h + round(layout.height * 0.035), cfg.hook.duration)
-        chunks = make_chunks(part_words, cfg.captions, length) if cfg.captions.enabled else []
+            hook = Hook(hook_lines, layout.hook_y, cfg.hook.duration)
 
         ass_rel = None
-        if chunks or hook:
+        if plan.chunks or hook:
             ass_path = job_dir / f"part{index}.ass"
             ass_path.write_text(
-                build_ass(
-                    chunks,
-                    width=layout.width,
-                    height=layout.height,
-                    duration=length,
-                    captions=cfg.captions,
-                    hook_cfg=cfg.hook,
-                    hook=hook,
-                ),
+                build_ass(plan.chunks, width=layout.width, height=layout.height, duration=length,
+                          captions=plan.style, hook_cfg=cfg.hook, hook=hook),
                 encoding="utf-8",
             )
             ass_rel = ass_path.relative_to(APP_DIR).as_posix()
 
+        emoji_size = edit.emoji_size
+        caption_y = round(layout.height * plan.style.position)
         job = RenderJob(
             clip=clip,
             clip_start=start,
@@ -378,14 +425,30 @@ class Bot:
             ass_file=ass_rel,
             fonts_dir=FONTS_DIR.relative_to(APP_DIR).as_posix(),
             mirror=cfg.gameplay.mirror and self.rng.random() < 0.5,
+            intervals=plan.intervals,
+            clip_size=(info.width, info.height),
+            zooms=plan.zooms,
+            zoom_amount=edit.zoom_amount,
+            reframe=plan.reframe,
+            emojis=plan.emojis,
+            emoji_y=caption_y - round(plan.style.font_size * 0.8) - emoji_size,
+            emoji_size=emoji_size,
+            mute=plan.mutes,
+            duck_music=cfg.audio.music_duck,
         )
+        if plan.sounds:
+            job.sfx_track = write_track(plan.sounds, length, job_dir / f"sfx{index}.wav", edit.sfx_volume)
         choice = pick_music(music, length, self.rng)
         if choice:
             track, music_start = choice
             job.music, job.music_start, job.music_loop = track.path, music_start, track.duration < length + 1
         part_text = f" part {index}/{total_parts}" if total_parts > 1 else ""
-        pieces = ", ".join(f"{s.key} @{s.start:.0f}s" for s in segments)
-        log.info("Rendering%s (%.1fs) with gameplay: %s", part_text, length, pieces)
+        pieces = ", ".join(f"{s.key} @{s.start:.0f}s" for s in segments) or "none (full-screen clip)"
+        cut = end - start - length
+        log.info(
+            "Rendering%s (%.1fs%s, %d zooms, %d emojis) with gameplay: %s", part_text, length,
+            f", {cut:.1f}s of pauses cut" if cut > 0.05 else "", len(plan.zooms), len(plan.emojis), pieces,
+        )
         run_ffmpeg(
             self.tools,
             build_command(job, cfg),
@@ -395,5 +458,15 @@ class Bot:
             label=f"  rendering{part_text}:",
             should_stop=self.should_stop,
         )
-        srt = build_srt(part_words) if cfg.captions.enabled and cfg.captions.save_srt and part_words else None
-        return Rendered(job.output, srt, segments, f"_part{index}" if total_parts > 1 else "", "", length)
+        cover = None
+        if edit.thumbnail:
+            try:
+                clean = self._clean_frame(job, plan, job_dir / f"cover{index}.mp4")
+                cover = make_cover(self.tools, clean, 0.0, title, job_dir / f"part{index}.jpg",
+                                   width=layout.width, height=layout.height, captions=plan.style, work_dir=job_dir,
+                                   fonts_dir=job.fonts_dir)
+            except MediaError as exc:
+                log.warning("Couldn't make the cover picture: %s", exc)
+        censor = set(edit.censor_words) if edit.censor else None
+        srt = build_srt(plan.words, censor=censor) if cfg.captions.enabled and cfg.captions.save_srt and plan.words else None
+        return Rendered(job.output, srt, segments, f"_part{index}" if total_parts > 1 else "", title, length, cover)

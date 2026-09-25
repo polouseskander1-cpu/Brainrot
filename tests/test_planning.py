@@ -135,7 +135,8 @@ def make_job(**overrides):
 def test_command_single_segment():
     args = build_command(make_job(), full_cfg())
     graph = args[args.index("-filter_complex") + 1]
-    assert args[:6] == ["-t", "30.000", "-i", "clip.mp4", "-ss", "12.500"]
+    assert args[:6] == ["-t", "30.200", "-i", "clip.mp4", "-ss", "12.500"]  # a little extra, trimmed exactly in the graph
+    assert "trim=end_frame=900" in graph
     assert "vstack=inputs=2" in graph and "concat" not in graph
     assert "ass=filename=.work/x/part1.ass:fontsdir=fonts" in graph
     assert "loudnorm=I=-14" in graph and "acompressor" in graph
@@ -155,5 +156,5 @@ def test_command_chained_gameplay_music_and_silent_clip():
     assert args[:2] == ["-ss", "42.000"]
     assert "concat=n=3:v=1:a=0" in graph
     assert args.count("-stream_loop") == 1 and "anullsrc=r=48000:cl=stereo" in args
-    assert "[4:a:0]atrim" in graph and "[5:a]" in graph  # music is input 4, silence input 5
+    assert "[5:a:0]atrim" in graph and "[4:a]" in graph  # silence is input 4, music input 5
     assert "amix=inputs=2" in graph and "loudnorm" not in graph and "ass=" not in graph

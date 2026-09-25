@@ -10,6 +10,7 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
 datas = [
     (os.path.join(ROOT, "fonts"), "fonts"),
+    (os.path.join(ROOT, "assets"), "assets"),  # emoji pictures, face detection model
     (os.path.join(ROOT, "config.yaml"), "."),
 ]
 datas += collect_data_files("faster_whisper")  # voice-activity model used while transcribing
