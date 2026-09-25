@@ -226,8 +226,13 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
 
 
 def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
+    cfg = load_config(config_path)
     while True:
-        cfg = load_config(config_path)
+        try:
+            cfg = load_config(config_path)
+        except ConfigError as exc:  # config.yaml edited by hand while the menu is open
+            ui.say(ui.red(f"Problem in {config_path.name}: {exc} (using the previous settings until it's fixed)"))
+            ui.pause()
         running = in_window.running or service.is_running()
         ui.banner(f"v{__version__}")
         for line in _status_lines(cfg, running, in_window.running):
