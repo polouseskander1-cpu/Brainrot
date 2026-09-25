@@ -258,10 +258,18 @@ def set_windows_run_value(command: str | None) -> None:
                 pass
 
 
-def autostart_enabled() -> bool:
+def login_system() -> str:
+    """How this computer starts programs at login: 'windows' (Run key), 'mac' (LaunchAgent) or 'linux' (XDG)."""
     if os.name == "nt":
+        return "windows"
+    return "mac" if sys.platform == "darwin" else "linux"
+
+
+def autostart_enabled() -> bool:
+    system = login_system()
+    if system == "windows":
         return windows_run_value() is not None
-    if sys.platform == "darwin":
+    if system == "mac":
         return MAC_AGENT.exists()
     return LINUX_AUTOSTART.exists()
 
@@ -269,9 +277,10 @@ def autostart_enabled() -> bool:
 def set_autostart(enabled: bool, config: Path | None = None) -> None:
     """Start the app (windowless) when you log in; it waits app.autostart_delay seconds, then runs."""
     cmd = app_command(["--autostart"], windowless=True, config=config)
-    if os.name == "nt":
+    system = login_system()
+    if system == "windows":
         set_windows_run_value(subprocess.list2cmdline(cmd) if enabled else None)
-    elif sys.platform == "darwin":
+    elif system == "mac":
         if enabled:
             MAC_AGENT.parent.mkdir(parents=True, exist_ok=True)
             MAC_AGENT.write_bytes(plistlib.dumps({

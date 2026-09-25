@@ -146,7 +146,7 @@ def test_is_running_follows_the_lock(monkeypatch, tmp_path):
 
 
 def test_autostart_linux_desktop_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(service, "login_system", lambda: "linux")
     monkeypatch.setattr(service, "LINUX_AUTOSTART", tmp_path / "autostart" / "brainrot-bot.desktop")
     service.set_autostart(True, config=tmp_path / "my config.yaml")
     text = service.LINUX_AUTOSTART.read_text(encoding="utf-8")
@@ -157,7 +157,7 @@ def test_autostart_linux_desktop_file(monkeypatch, tmp_path):
 
 
 def test_autostart_macos_launch_agent(monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(service, "login_system", lambda: "mac")
     monkeypatch.setattr(service, "MAC_AGENT", tmp_path / "LaunchAgents" / "agent.plist")
     service.set_autostart(True)
     agent = plistlib.loads(service.MAC_AGENT.read_bytes())
