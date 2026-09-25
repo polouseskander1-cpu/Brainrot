@@ -98,7 +98,7 @@ upload:
   facebook: false       # Facebook Page Reels (3-90 second reels only)
   hours_between_posts: 3   # space out posts on each platform (0 = post as soon as a reel is ready)
   hashtags: "#fyp #viral #podcast"   # added to every post. A hashtags.txt in a clip folder adds more.
-  youtube_privacy: public  # public, unlisted or private. Unaudited Google projects can only upload private.
+  youtube_privacy: public  # public, unlisted or private. Until your Google project passes YouTube's audit, uploads are locked private.
   youtube_category: 24     # 24 = Entertainment, 27 = Education, 22 = People & Blogs
   tiktok_mode: draft       # draft = lands in your TikTok inbox, you tap Post (works for every app);
                            # direct = posts by itself (needs a TikTok app that passed TikTok's audit)

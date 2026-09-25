@@ -234,16 +234,33 @@ def _desktop_quote(arg: str) -> str:
     return '"' + "".join("\\" + ch if ch in '"`$\\' else ch for ch in arg) + '"'
 
 
+def windows_run_value() -> str | None:
+    """The command Windows runs at login for this app (HKCU Run key), if any."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            return winreg.QueryValueEx(key, AUTOSTART_NAME)[0]
+    except OSError:
+        return None
+
+
+def set_windows_run_value(command: str | None) -> None:
+    import winreg
+
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+        if command:
+            winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, command)
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_NAME)
+            except FileNotFoundError:
+                pass
+
+
 def autostart_enabled() -> bool:
     if os.name == "nt":
-        try:
-            import winreg
-
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-                winreg.QueryValueEx(key, AUTOSTART_NAME)
-            return True
-        except OSError:
-            return False
+        return windows_run_value() is not None
     if sys.platform == "darwin":
         return MAC_AGENT.exists()
     return LINUX_AUTOSTART.exists()
@@ -253,16 +270,7 @@ def set_autostart(enabled: bool, config: Path | None = None) -> None:
     """Start the app (windowless) when you log in; it waits app.autostart_delay seconds, then runs."""
     cmd = app_command(["--autostart"], windowless=True, config=config)
     if os.name == "nt":
-        import winreg
-
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            if enabled:
-                winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, subprocess.list2cmdline(cmd))
-            else:
-                try:
-                    winreg.DeleteValue(key, AUTOSTART_NAME)
-                except FileNotFoundError:
-                    pass
+        set_windows_run_value(subprocess.list2cmdline(cmd) if enabled else None)
     elif sys.platform == "darwin":
         if enabled:
             MAC_AGENT.parent.mkdir(parents=True, exist_ok=True)

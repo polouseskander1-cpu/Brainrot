@@ -60,11 +60,8 @@ def _autostart():
         service.set_autostart(True)
         assert service.autostart_enabled(), "entry not created"
         if os.name == "nt":
-            import winreg
-
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, service.RUN_KEY) as key:
-                value = winreg.QueryValueEx(key, service.AUTOSTART_NAME)[0]
-            assert "--autostart" in value
+            value = service.windows_run_value() or ""
+            assert "--autostart" in value, value
             if FROZEN:
                 assert service.BACKGROUND_EXE in value, value
         service.set_autostart(False)

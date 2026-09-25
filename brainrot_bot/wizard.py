@@ -58,8 +58,10 @@ def connect_youtube(cfg: SimpleNamespace, creds: Credentials) -> bool:
         "  3. Google Auth Platform > set up the consent screen (External), then under",
         "     Audience press 'Publish app' (in 'Testing' the login stops working after 7 days)",
         "  4. Clients > Create client > type 'Desktop app' > Download JSON",
-        ui.yellow("Note: until Google approves an audit of your project, YouTube keeps API uploads PRIVATE."),
-        "You can make them public yourself in YouTube Studio.",
+        ui.yellow("Heads up: until your Google project passes YouTube's API audit, YouTube LOCKS every"),
+        ui.yellow("API upload as private and you can't make it public. The audit is free but can take weeks:"),
+        ui.yellow("  support.google.com/youtube/contact/yt_api_form   (until then, skip YouTube and upload"),
+        ui.yellow("  the reels from the Reels folder yourself)"),
     ])
     raw = ui.ask("Path to the downloaded JSON file (drag it here), or 'skip'")
     if _skip(raw):
@@ -215,7 +217,8 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     gameplay = ui.ask_path("Folder for your GAMEPLAY videos", suggested["gameplay"])
     clips = ui.ask_path("Folder for your CLIPS (one subfolder per podcast / influencer)", suggested["clips"])
     output = ui.ask_path("Folder where finished REELS are saved", suggested["output"])
-    music = suggested["music"]
+    # The optional music folder sits next to the gameplay folder, wherever that was put.
+    music = suggested["music"] if gameplay == Path(suggested["gameplay"]).resolve() else gameplay.parent / "Music"
     music.mkdir(parents=True, exist_ok=True)
 
     base = config_path.resolve().parent
