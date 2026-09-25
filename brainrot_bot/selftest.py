@@ -59,6 +59,42 @@ def _editing():
     return f"{len(EMOJI_WORDS)} emojis, face model, sound effects"
 
 
+def _app_parts():
+    """The phone dashboard (a real local server), its QR code, the tray icon picture and the update check code."""
+    import json
+    import queue
+    import urllib.request
+    from types import SimpleNamespace
+
+    from .dashboard import Dashboard, get_token, qr_text
+    from .updater import install_script, newer
+
+    assert qr_text("http://192.168.1.2:8770/?key=abc"), "no QR code"
+    assert newer("99.0.0") and "robocopy" in install_script(Path("n"), Path("a"), 1, ["x"])
+    detail = []
+    if os.name == "nt":
+        from .tray import icon_image
+
+        assert icon_image(32).size == (32, 32)
+        detail.append("tray icon")
+    with tempfile.TemporaryDirectory() as tmp:
+        creds = Credentials(Path(tmp) / "credentials")
+        cfg = SimpleNamespace(dashboard=SimpleNamespace(enabled=True, port=0, lan=False), phone=SimpleNamespace(link_folder="x"),
+                              paths=SimpleNamespace(output=Path(tmp)))
+        board = Dashboard(cfg, creds, queue.Queue(), dict, lambda: "ok", list)
+        assert board.start(), "dashboard didn't start"
+        try:
+            port = board.server.server_address[1]
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+            with opener.open(f"http://127.0.0.1:{port}/?key={get_token(creds)}", timeout=10):
+                pass
+            with opener.open(f"http://127.0.0.1:{port}/api/state", timeout=10) as resp:
+                assert json.loads(resp.read())["status"] == "ok"
+        finally:
+            board.stop()
+    return ", ".join(["dashboard", "QR code", *detail])
+
+
 def _credentials():
     with tempfile.TemporaryDirectory() as tmp:
         store = Credentials(Path(tmp) / "credentials")
@@ -118,6 +154,7 @@ def run() -> int:
         _check("ffmpeg with captions + x264", _tools),
         _check("speech-to-text engine", _speech_engine),
         _check("editing (emojis, faces, sounds)", _editing),
+        _check("phone dashboard, QR, tray, updates", _app_parts),
         _check("credential storage", _credentials),
         _check("start at login", _autostart),
         _check("background start/stop", _background),

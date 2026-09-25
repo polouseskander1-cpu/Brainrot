@@ -23,7 +23,7 @@ video:
   layout: split         # split = clip on top, gameplay below | floating = gameplay full screen, clip as a card on top
                         # fullscreen = only the clip, cropped to follow the speaker's face
                         # side = clip left, gameplay right (for landscape videos: set width 1920 and height 1080)
-  codec: libx264        # h264_nvenc (NVIDIA), h264_videotoolbox (Mac) or h264_qsv (Intel) render faster
+  codec: auto           # auto = the graphics card if it works (NVIDIA, Intel, AMD, Mac), else the CPU (libx264)
   crf: 19               # libx264 quality: lower = better quality, bigger file (18-23 is a good range)
   preset: medium        # libx264 speed: faster / medium / slow
   bitrate: 12M          # max bitrate for libx264 (keeps files uploadable), target bitrate for hardware codecs

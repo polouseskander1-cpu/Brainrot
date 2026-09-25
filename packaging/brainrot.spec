@@ -12,6 +12,7 @@ datas = [
     (os.path.join(ROOT, "fonts"), "fonts"),
     (os.path.join(ROOT, "assets"), "assets"),  # emoji pictures, face detection model
     (os.path.join(ROOT, "config.yaml"), "."),
+    (os.path.join(ROOT, "packaging", "icon.ico"), "packaging"),  # tray icon
 ]
 datas += collect_data_files("faster_whisper")  # voice-activity model used while transcribing
 datas += collect_data_files("yt_dlp_ejs")  # YouTube challenge solver scripts (run by the bundled Deno)
@@ -29,9 +30,9 @@ a = Analysis(
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["brainrot_bot.app", "brainrot_bot.wizard", "brainrot_bot.selftest", "yt_dlp_ejs"]
+    hiddenimports=["brainrot_bot.app", "brainrot_bot.wizard", "brainrot_bot.selftest", "yt_dlp_ejs", "segno", "pystray._win32"]
     + collect_submodules("yt_dlp.extractor") + collect_submodules("anthropic.types"),
-    excludes=["tkinter", "matplotlib", "IPython", "pytest", "PIL", "cryptography", "OpenSSL"],
+    excludes=["tkinter", "matplotlib", "IPython", "pytest", "cryptography", "OpenSSL"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

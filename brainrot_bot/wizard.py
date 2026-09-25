@@ -10,8 +10,9 @@ from types import SimpleNamespace
 from . import service, ui
 from .ai import CREDENTIAL_KEY as AI_KEY
 from .ai import KEY_PAGE, check_key
-from .config import FROZEN, load_config, update_config_file
+from .config import FROZEN, SERVER, load_config, update_config_file
 from .credentials import Credentials
+from .cloud import synced_folders
 from .links import add_link
 from .phone import DISCORD, TELEGRAM, Discord, PhoneError, Telegram
 from .uploads import PLATFORMS, UploadError, platform_name
@@ -401,6 +402,72 @@ def setup_phone(cfg: SimpleNamespace, creds: Credentials, ask_first: bool = True
     return settings
 
 
+def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
+    """Menu: caption style, layout and the editing features, saved in config.yaml."""
+    from .styles import DESCRIPTIONS, PRESETS
+
+    while True:
+        cfg = load_config(config_path)
+        e = cfg.edit
+        on = lambda value: ui.green("on") if value else ui.dim("off")  # noqa: E731
+        ui.banner("look & features")
+        items = [
+            ("Caption style", f"{cfg.captions.style} - {DESCRIPTIONS.get(cfg.captions.style, '')}"),
+            ("Layout", {"split": "clip on top, gameplay below", "floating": "gameplay full screen, clip as a card",
+                        "fullscreen": "only the clip, following the face", "side": "side by side (landscape)"}[cfg.video.layout]),
+            ("Cut pauses", on(e.cut_silences)),
+            ("Zoom in on key moments", on(e.zoom)),
+            ("Emojis over the captions", on(e.emojis)),
+            ("Sound effects", on(e.sfx)),
+            ("Hide swear words", on(e.censor) + (f" ({e.censor_mode})" if e.censor else "")),
+            ("Hook title at the start", on(cfg.hook.enabled)),
+            ("Cover picture", on(e.thumbnail)),
+            ("Extra reels with translated captions", ", ".join(cfg.captions.translate_to) or ui.dim("none")),
+            ("Render with", "graphics card if possible (auto)" if cfg.video.codec == "auto" else cfg.video.codec),
+        ]
+        for number, (name, value) in enumerate(items, 1):
+            ui.say(f"  {ui.yellow(str(number))}) {name}: {value}")
+        ui.say(f"  {ui.yellow('0')}) Back")
+        choice = ui.ask("\nChange", "0")
+        toggles = {"3": ("edit", "cut_silences"), "4": ("edit", "zoom"), "5": ("edit", "emojis"), "6": ("edit", "sfx"),
+                   "8": ("hook", "enabled"), "9": ("edit", "thumbnail")}
+        if choice == "0" or not choice:
+            return
+        if choice == "1":
+            names = list(PRESETS)
+            picked = names[ui.choose([f"{n} - {DESCRIPTIONS[n]}" for n in names], default=names.index(cfg.captions.style) + 1) - 1]
+            update_config_file(config_path, {"captions": {"style": picked}})
+        elif choice == "2":
+            layouts = ["split", "floating", "fullscreen", "side"]
+            picked = layouts[ui.choose([
+                "Split: clip on top, gameplay below (the classic)", "Floating: gameplay full screen, the clip as a card on top",
+                "Full screen: only the clip, cropped to follow the speaker's face",
+                "Side by side: clip left, gameplay right (landscape 16:9 video)"], default=layouts.index(cfg.video.layout) + 1) - 1]
+            changes = {"layout": picked}
+            if picked == "side" and cfg.video.height > cfg.video.width:
+                changes.update(width=1920, height=1080)
+            elif picked != "side" and cfg.video.width > cfg.video.height:
+                changes.update(width=1080, height=1920)
+            update_config_file(config_path, {"video": changes})
+        elif choice in toggles:
+            section, key = toggles[choice]
+            update_config_file(config_path, {section: {key: not getattr(getattr(cfg, section), key)}})
+        elif choice == "7":
+            if e.censor:
+                mode = ui.choose(["Bleep", "Mute", "Turn off"], default=1)
+                update_config_file(config_path, {"edit": {"censor": mode != 3, "censor_mode": "bleep" if mode == 1 else "mute"}})
+            else:
+                update_config_file(config_path, {"edit": {"censor": True}})
+        elif choice == "10":
+            ui.say("Language codes separated by spaces, e.g.  es ar fr  (Enter = none). Needs the AI helper.")
+            codes = ui.ask("Languages", " ".join(cfg.captions.translate_to))
+            update_config_file(config_path, {"captions": {"translate_to": codes.replace(",", " ").split()}})
+        elif choice == "11":
+            picked = ui.choose(["Graphics card if it works, otherwise the processor (auto)", "Always the processor (libx264)"],
+                               default=1 if cfg.video.codec == "auto" else 2)
+            update_config_file(config_path, {"video": {"codec": "auto" if picked == 1 else "libx264"}})
+
+
 def add_video_link(cfg: SimpleNamespace) -> None:
     """Menu: paste a link, pick the folder (podcast / influencer) it belongs to."""
     ui.banner("add a video link")
@@ -451,28 +518,43 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     ui.banner("setup")
     ui.say("Welcome! This takes about a minute. Press Enter to keep the answer in [brackets].")
 
-    ui.step(1, TOTAL_STEPS, "How should the bot run?")
-    run_mode = "background" if ui.choose([
-        "24/7 in the background - keeps making reels after you close this window (recommended)",
-        "Only while this window is open - closing the window stops it",
-    ], default=1 if cfg.app.run_mode == "background" else 2) == 1 else "window"
-
-    ui.step(2, TOTAL_STEPS, "Start with your computer?")
+    total = TOTAL_STEPS - (2 if SERVER else 0)
+    numbers = iter(range(1, total + 1))
     delay = int(cfg.app.autostart_delay)
-    ui.say(f"The bot can start by itself about {delay} seconds after you log in, so it never misses a clip.")
-    autostart = ui.ask_yes_no("Start automatically when you log in?", default=cfg.app.autostart or not cfg.app.setup_done)
+    if SERVER:  # Docker keeps it running and restarts it; there's no window or login to start with
+        run_mode, autostart = "background", False
+    else:
+        ui.step(next(numbers), total, "How should the bot run?")
+        run_mode = "background" if ui.choose([
+            "24/7 in the background - keeps making reels after you close this window (recommended)",
+            "Only while this window is open - closing the window stops it",
+        ], default=1 if cfg.app.run_mode == "background" else 2) == 1 else "window"
 
-    ui.step(3, TOTAL_STEPS, "Auto-posting (optional)")
+        ui.step(next(numbers), total, "Start with your computer?")
+        ui.say(f"The bot can start by itself about {delay} seconds after you log in, so it never misses a clip.")
+        autostart = ui.ask_yes_no("Start automatically when you log in?", default=cfg.app.autostart or not cfg.app.setup_done)
+
+    ui.step(next(numbers), total, "Auto-posting (optional)")
     enabled = setup_platforms(cfg, creds)
 
-    ui.step(4, TOTAL_STEPS, "AI helper (optional)")
+    ui.step(next(numbers), total, "AI helper (optional)")
     ai_on = connect_ai(cfg, creds)
 
-    ui.step(5, TOTAL_STEPS, "Your phone (optional)")
+    ui.step(next(numbers), total, "Your phone (optional)")
     phone = setup_phone(cfg, creds)
 
-    ui.step(6, TOTAL_STEPS, "Your folders")
+    ui.step(next(numbers), total, "Your folders")
     suggested = suggested_folders(cfg)
+    clouds = synced_folders() if not cfg.app.setup_done and not SERVER else {}
+    if clouds:
+        ui.say("You have " + " and ".join(clouds) + " on this computer. Keeping the folders there lets you add clips")
+        ui.say("from your phone's app and watch the finished reels on it.")
+        names = list(clouds)
+        choice = ui.choose([f"Yes, in {name} ({clouds[name] / 'Brainrot Bot'})" for name in names] + ["No, only on this computer"],
+                           default=len(names) + 1)
+        if choice <= len(names):
+            base = clouds[names[choice - 1]] / "Brainrot Bot"
+            suggested = {"gameplay": base / "Gameplay", "clips": base / "Clips", "output": base / "Reels", "music": base / "Music"}
     gameplay = ui.ask_path("Folder for your GAMEPLAY videos", suggested["gameplay"])
     clips = ui.ask_path("Folder for your CLIPS (one subfolder per podcast / influencer)", suggested["clips"])
     output = ui.ask_path("Folder where finished REELS are saved", suggested["output"])
@@ -493,10 +575,11 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
         **({"ai": {"enabled": True}} if ai_on else {}),
         **({"phone": phone} if phone else {}),
     })
-    try:
-        service.set_autostart(autostart, config=config_path)
-    except OSError as exc:
-        ui.say(ui.red(f"Couldn't change the start-at-login setting: {exc}"))
+    if not SERVER:
+        try:
+            service.set_autostart(autostart, config=config_path)
+        except OSError as exc:
+            ui.say(ui.red(f"Couldn't change the start-at-login setting: {exc}"))
 
     ui.banner("ready")
     ui.say()
@@ -521,7 +604,9 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     ui.say("  Runs: " + ("24/7 in the background" if run_mode == "background" else "while the window is open")
            + (f", starts {delay}s after you log in" if autostart else ""))
     ui.say()
-    if ui.ask_yes_no("Open the gameplay and clips folders now?", default=True):
+    if SERVER:
+        ui.say("  On the server these are inside the data folder. Start the bot with:  docker compose up -d")
+    elif ui.ask_yes_no("Open the gameplay and clips folders now?", default=True):
         ui.open_folder(gameplay)
         ui.open_folder(clips)
     if os.name != "nt" and run_mode == "window" and autostart:

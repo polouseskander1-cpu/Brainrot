@@ -411,8 +411,10 @@ def build_command(job: RenderJob, cfg: SimpleNamespace) -> list[str]:
     args = inputs.args + ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map", "[aout]", "-t", duration]
     v = cfg.video
     codec = getattr(v, "resolved_codec", "") or v.codec
+    if codec == "auto":  # not detected yet (see gpu.py): the CPU always works
+        codec = "libx264"
     args += encoder_args(codec, v)
-    args += ["-pix_fmt", "yuv420p", "-r", f"{L.fps:g}"]
+    args += ["-pix_fmt", "nv12" if codec.endswith("_qsv") else "yuv420p", "-r", f"{L.fps:g}"]
     args += ["-c:a", "aac", "-b:a", v.audio_bitrate, "-ar", str(AUDIO_RATE), "-ac", "2"]
     args += ["-map_metadata", "-1", "-map_chapters", "-1", "-movflags", "+faststart", "-max_muxing_queue_size", "4096"]
     args += list(v.extra_args)

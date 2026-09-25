@@ -351,7 +351,7 @@ class Discord:
 
 
 HELP = ("Send me a video link to make reels from it.\n"
-        "/status - what the bot is doing\n/stats - views, likes, best podcasts\n"
+        "/status - what the bot is doing\n/stats - views, likes, best podcasts\n/dashboard - the phone dashboard link\n"
         "/pause - stop posting for now\n/resume - post again")
 
 
@@ -361,18 +361,20 @@ def clean_folder_name(text: str) -> str:
 
 
 class Phone:
-    def __init__(self, cfg: SimpleNamespace, credentials, tools: Tools, memory_path: Path, work_dir: Path):
+    def __init__(self, cfg: SimpleNamespace, credentials, tools: Tools, memory_path: Path, work_dir: Path,
+                 actions: "queue.Queue[Action] | None" = None):
         self.cfg = cfg
         self.credentials = credentials
         self.tools = tools
         self.memory_path = memory_path
         self.work_dir = work_dir
-        self.actions: queue.Queue[Action] = queue.Queue()
+        self.actions: queue.Queue[Action] = actions if actions is not None else queue.Queue()
         self.outbox: queue.Queue = queue.Queue()
         self.pending_links: dict[str, dict] = {}
         self.status_provider: Callable[[], str] = lambda: "The bot is running."
         self.stats_provider: Callable[[], str] = lambda: "No stats yet."
         self.folders_provider: Callable[[], list[str]] = lambda: []
+        self.dashboard_provider: Callable[[], str] = lambda: ""
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -449,6 +451,9 @@ class Phone:
             return self.status_provider()
         if word == "stats":
             return self.stats_provider()
+        if word == "dashboard":
+            link = self.dashboard_provider()
+            return f"Open on the same Wi-Fi as the computer: {link}" if link else "The dashboard is switched off (dashboard.enabled)."
         if word in ("pause", "resume"):
             self.actions.put(Action(word))
             return "Posting paused. Send /resume to post again." if word == "pause" else "Posting again."

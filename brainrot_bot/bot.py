@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import queue
 import random
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -16,6 +18,7 @@ from types import SimpleNamespace
 
 from .ai import AI
 from .analysis import Loudness
+from .cloud import CloudSync
 from .captions import Hook, build_ass, build_srt, group_words, prepare_words, time_groups
 from .config import APP_DIR, FONTS_DIR, MODELS_DIR, STOP_FILE, WORK_DIR
 from .copywriter import merge_hashtags, write_copy
@@ -23,11 +26,13 @@ from .credentials import Credentials
 from .dedupe import Fingerprints, frame_hashes, quick_hash, sound_bits, text_signature
 from .editor import EditPlan, plan_edit
 from .faces import find_faces
+from .gpu import setup_codec
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
 from .links import LinkQueue, add_link
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, MediaInfo, StopRequested, Tools, probe, run_ffmpeg
 from .moments import auto_count, find_moments, moments_from_picks, split_sentences, transcript_for_ai
 from .parts import plan_parts
+from .dashboard import Dashboard, dashboard_url
 from .phone import Action, Phone
 from .render import Layout, RenderJob, build_command, compute_layout
 from .report import stats_lines
@@ -154,6 +159,7 @@ class Bot:
     def __init__(self, cfg: SimpleNamespace, tools: Tools, *, persist: bool = True, preview_seconds: float = 0.0):
         self.cfg = cfg
         self.tools = tools
+        setup_codec(cfg, tools)
         self.persist = persist
         self.preview_seconds = preview_seconds
         self.state = State(cfg.paths.state_file)
@@ -171,13 +177,22 @@ class Bot:
         if self.uploads is not None:
             self.uploads.blocked.clear()  # accounts may have been connected again since last time
         self.links = LinkQueue(cfg, self.state, tools, self._save) if persist else None
+        self.cloud = CloudSync(cfg) if persist else None
         self.fingerprints = Fingerprints(self.state, cfg.dedupe.similarity) if cfg.dedupe.enabled and persist else None
         self.activity = "starting"
-        self.phone = Phone(cfg, self.credentials, tools, cfg.paths.state_file.with_name("phone_state.json"), WORK_DIR / "phone") if persist else None
+        self._update_checked = 0.0
+        self._update_told = ""
+        self.inbox: queue.Queue[Action] = queue.Queue()  # what you ask for from the phone or the dashboard
+        self.phone = Phone(cfg, self.credentials, tools, cfg.paths.state_file.with_name("phone_state.json"), WORK_DIR / "phone",
+                           self.inbox) if persist else None
+        self.dashboard = Dashboard(cfg, self.credentials, self.inbox, self._read_state, self._status_text,
+                                   self._clip_folders) if persist and cfg.dashboard.enabled else None
         if self.phone is not None and self.phone.enabled:
             self.phone.status_provider = self._status_text
             self.phone.stats_provider = self._stats_text
             self.phone.folders_provider = self._clip_folders
+            if self.dashboard is not None:
+                self.phone.dashboard_provider = lambda: dashboard_url(cfg, self.credentials)
             if self.uploads is not None:
                 self.uploads.approval_needed = lambda: self.phone.approval
                 self.uploads.on_posted = self.phone.posted
@@ -192,11 +207,55 @@ class Bot:
             self._phone_actions()
             time.sleep(min(0.5, max(0.0, end - time.monotonic())))
 
+    # ------------------------------------------------------------ updates
+
+    def _maybe_update(self) -> None:
+        """Once a day: is there a new version? With app.auto_update: auto, install it now (we're idle)."""
+        from . import updater
+
+        if self.cfg.app.auto_update == "off" or not self.persist or time.time() - self._update_checked < 3600:
+            return
+        self._update_checked = time.time()
+        release = updater.available_update(self.state.data)
+        self._save()
+        if release is None:
+            return
+        first_time = self._update_told != release.version
+        self._update_told = release.version
+        if not updater.can_install() or self.cfg.app.auto_update == "ask":
+            if first_time:
+                how = "open the app and pick Update" if updater.can_install() else "run: git pull"
+                log.info("Brainrot Bot %s is available (you have the older one): %s. %s", release.version, how, release.page)
+                if self.phone is not None:
+                    self.phone.problem(f"Brainrot Bot {release.version} is available: {how}.", f"update:{release.version}")
+            return
+        if updater.other_windows_open():
+            if first_time:
+                log.info("Brainrot Bot %s is ready to install; close the Brainrot Bot window to let it update.", release.version)
+            return
+        log.info("Updating to Brainrot Bot %s...", release.version)
+        try:
+            new_app = updater.unpack(updater.download(release))
+        except Exception as exc:  # noqa: BLE001 - try again tomorrow
+            log.warning("Couldn't download the update: %s", exc)
+            return
+        updater.start_install(new_app, [sys.executable, *sys.argv[1:]])
+        log.info("Restarting to finish the update.")
+        self.stop_event.set()
+
     # ------------------------------------------------------------ the phone (Telegram / Discord)
 
     def _phone_actions(self) -> None:
-        if self.phone is not None and self.phone.enabled:
-            self.phone.drain(self._do_phone_action)
+        """Do what was asked from the phone or the dashboard (they only queue it)."""
+        while True:
+            try:
+                action = self.inbox.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._do_phone_action(action)
+            except Exception:  # noqa: BLE001
+                log.exception("Couldn't do what the phone asked (%s)", action.kind)
 
     def _do_phone_action(self, action: Action) -> None:
         if action.kind in ("approve", "now", "skip") and self.uploads is not None:
@@ -312,11 +371,15 @@ class Bot:
         log.info("Watching %s for new clips.", self.cfg.paths.clips)
         if self.phone is not None:
             self.phone.start()
+        if self.dashboard is not None:
+            self.dashboard.start()
         try:
             self._loop()
         finally:
             if self.phone is not None:
                 self.phone.stop()
+            if self.dashboard is not None:
+                self.dashboard.stop()
         log.info("Bot stopped.")
 
     def _loop(self) -> None:
@@ -324,6 +387,10 @@ class Bot:
             self.activity = "watching for new clips"
             try:
                 self._phone_actions()
+                if self.cloud is not None and self.cloud.enabled:
+                    self.activity = "syncing the cloud folders"
+                    self.cloud.run()
+                    self.activity = "watching for new clips"
                 self._download_links()
                 ready, _ = self.scan()
                 for path in ready:
@@ -334,6 +401,8 @@ class Bot:
                     self.uploads.run_due(self.should_stop)
                     if self.cfg.upload.stats:
                         self.uploads.refresh_stats(self.should_stop)
+                if not self.should_stop():
+                    self._maybe_update()
             except StopRequested:
                 break
             except Exception:  # noqa: BLE001 - e.g. a folder that briefly can't be read; never stop the bot

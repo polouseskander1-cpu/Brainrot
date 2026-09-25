@@ -1,0 +1,16 @@
+# Brainrot Bot on a server. First time:  docker compose run --rm brainrot --setup
+# Then:                                   docker compose up -d
+services:
+  brainrot:
+    build: .
+    image: brainrot-bot
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data:/data          # config.yaml, logins, Clips, Gameplay, Reels... all live here
+    ports:
+      - "8770:8770"           # the phone dashboard (only on a home network, or put it behind HTTPS)
+    environment:
+      TZ: Europe/London       # your time zone, so posts go out at the right times
+      # BRAINROT_PUBLIC_URL: http://192.168.1.50:8770   # how your phone reaches this server

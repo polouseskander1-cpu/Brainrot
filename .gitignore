@@ -18,6 +18,11 @@ output/*
 /bot_state*.json*
 /credentials.dat*
 /credentials.json*
+/phone_state.json*
+/.update/
+
+# Server mode (docker compose)
+/data/
 
 # Windows app build
 /build/

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 from pathlib import Path
@@ -13,13 +14,15 @@ from . import __version__, service, ui
 from .bot import Bot
 from .cli import add_file_logging, lower_priority
 from .ai import CREDENTIAL_KEY as AI_KEY
-from .config import DEFAULT_CONFIG_PATH, STOP_FILE, WORK_DIR, ConfigError, load_config, update_config_file
+from .config import DEFAULT_CONFIG_PATH, SERVER, STOP_FILE, WORK_DIR, ConfigError, load_config, update_config_file
 from .credentials import Credentials
 from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 from .report import stats_lines
 from .uploads import PLATFORMS, platform_name
-from .wizard import add_video_link, connect_ai, run_setup, setup_phone
+from .dashboard import dashboard_url, qr_text
+from .wizard import add_video_link, choose_look, connect_ai, run_setup, setup_phone
+from . import updater
 
 log = logging.getLogger("brainrot")
 
@@ -166,6 +169,58 @@ def _watch_log(cfg: SimpleNamespace) -> None:
     thread.join(timeout=2)
 
 
+def _show_dashboard(cfg: SimpleNamespace, config_path: Path, running: bool) -> None:
+    ui.banner("phone dashboard")
+    if not cfg.dashboard.enabled:
+        if not ui.ask_yes_no("The phone dashboard is off. Switch it on?", default=True):
+            return
+        update_config_file(config_path, {"dashboard": {"enabled": True}})
+        cfg = load_config(config_path)
+        ui.say(ui.dim("It starts the next time the bot starts (Stop / Start the bot)."))
+    url = dashboard_url(cfg, Credentials(cfg.paths.credentials))
+    ui.say("Scan this with your phone's camera (the phone must be on the same Wi-Fi as this computer):")
+    ui.say()
+    qr = qr_text(url)
+    if qr:
+        print(qr)
+    ui.say("  " + ui.yellow(url))
+    ui.say()
+    if not running:
+        ui.say(ui.red("  The bot isn't running, so the page won't open until you start it."))
+    ui.say(ui.dim("  Windows may ask to allow Brainrot Bot on private networks: say yes, or the phone can't connect."))
+    ui.say(ui.dim("  Anyone with this link can approve your reels; keep it to yourself."))
+    ui.pause()
+
+
+def _update(release, in_window: "InWindowBot", restart) -> int | None:
+    """Download and install a new version. Returns the exit code when the app should close."""
+    if not updater.can_install():
+        ui.say(f"Brainrot Bot {release.version} is out. Update the source code with:  git pull")
+        ui.say(ui.dim(release.page))
+        ui.pause()
+        return None
+    ui.say(f"Downloading Brainrot Bot {release.version}...")
+    if in_window.running or service.is_running():
+        restart(stop_only=True)
+    last = [0]
+
+    def progress(done: int, total: int) -> None:
+        percent = int(done * 100 / total) if total else 0
+        if percent >= last[0] + 10:
+            last[0] = percent - percent % 10
+            ui.say(f"  {last[0]}%")
+
+    try:
+        new_app = updater.unpack(updater.download(release, progress=progress))
+    except Exception as exc:  # noqa: BLE001
+        ui.say(ui.red(f"The update didn't work: {exc}"))
+        ui.pause()
+        return None
+    ui.say(ui.green("Installing... the app opens again by itself in a few seconds."))
+    updater.start_install(new_app, [sys.executable, *sys.argv[1:]])
+    return 0
+
+
 def _show_stats(cfg: SimpleNamespace) -> None:
     ui.banner("stats")
     for line in stats_lines(_load_state(cfg)):
@@ -200,6 +255,8 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
     cfg.paths.logs.mkdir(parents=True, exist_ok=True)
     if force_setup or not cfg.app.setup_done:
         cfg = run_setup(config_path)
+    if SERVER:  # on a server the container runs the bot (docker compose up -d); the setup is all that's needed here
+        return 0
 
     try:
         tools = find_tools(cfg.tools.ffmpeg, cfg.tools.ffprobe, need_subtitles=cfg.captions.enabled or cfg.hook.enabled)
@@ -210,6 +267,7 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
 
     in_window = InWindowBot()
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    updater.clean_up()
 
     def start(current: SimpleNamespace) -> None:
         if current.app.run_mode == "background":
@@ -234,8 +292,11 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
             start(load_config(config_path))
 
     start(cfg)
+    found: list = []
+    if cfg.app.auto_update != "off":
+        threading.Thread(target=lambda: found.append(updater.available_update(force=True)), daemon=True).start()
     try:
-        return _menu(config_path, in_window, start, restart)
+        return _menu(config_path, in_window, start, restart, found)
     except KeyboardInterrupt:
         if in_window.running:
             ui.say("\nStopping the bot...")
@@ -243,7 +304,7 @@ def run_app(config_path: Path | None, force_setup: bool = False) -> int:
         return 130
 
 
-def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
+def _menu(config_path: Path, in_window: InWindowBot, start, restart, found: list | None = None) -> int:
     cfg = load_config(config_path)
     while True:
         try:
@@ -255,6 +316,13 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
         ui.banner(f"v{__version__}")
         for line in _status_lines(cfg, running, in_window.running):
             ui.say(line)
+        release = next((r for r in (found or []) if r is not None), None)
+        if release is not None:
+            ui.say("  " + ui.green(f"Update:      Brainrot Bot {release.version} is available (you have {__version__})"))
+            if cfg.app.auto_update == "auto" and updater.can_install():
+                code = _update(release, in_window, restart)
+                if code is not None:
+                    return code
         ui.say(ui.dim("-" * ui.WIDTH))
         failed = sum(1 for e in _load_state(cfg).get("clips", {}).values() if e.get("status") == "failed")
         creds_now = Credentials(cfg.paths.credentials)
@@ -301,13 +369,26 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             _retry_failed(cfg, restart)
             time.sleep(1)
 
+        def look() -> None:
+            choose_look(cfg, config_path)
+            settings_changed()
+
+        exit_code: list[int] = []
+
+        def update() -> None:
+            code = _update(release, in_window, restart)
+            if code is not None:
+                exit_code.append(code)
+
         actions = [
             ("Open the gameplay folder", lambda: ui.open_folder(cfg.paths.gameplay)),
             ("Open the clips folder", lambda: ui.open_folder(cfg.paths.clips)),
             ("Open the reels folder", lambda: ui.open_folder(cfg.paths.output)),
             ("Add a video link (YouTube, TikTok, Instagram...)", lambda: add_video_link(cfg)),
+            ("Phone dashboard (scan a QR code)", lambda: _show_dashboard(cfg, config_path, running)),
             ("Watch live activity", lambda: _watch_log(cfg)),
             ("Stats: views, likes, best podcasts and gameplay", lambda: _show_stats(cfg)),
+            ("Look & features: caption style, layout, zooms, emojis...", look),
             ("Connect accounts / auto-posting", accounts),
             ("AI helper (Claude): " + ("connected" if ai_on else "connect"), ai),
             ("Phone (Telegram / Discord): " + (phone_state or "connect"), phone),
@@ -316,6 +397,8 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
         ]
         if failed:
             actions.append((f"Try the {failed} failed clip(s) again", retry))
+        if release is not None:
+            actions.append((ui.green(f"Update to Brainrot Bot {release.version}"), update))
         for number, (text, _) in enumerate(actions, 1):
             ui.say(f"  {ui.yellow(str(number))}) {text}")
         quit_text = "Quit (stops the bot)" if in_window.running else "Close this window (the bot keeps running)" if running else "Close"
@@ -328,3 +411,5 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             return 0
         if choice.isdigit() and 1 <= int(choice) <= len(actions):
             actions[int(choice) - 1][1]()
+            if exit_code:
+                return exit_code[0]

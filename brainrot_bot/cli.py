@@ -25,7 +25,7 @@ from pathlib import Path
 
 from . import __version__, service
 from .bot import Bot
-from .config import FONTS_DIR, STOP_FILE, WORK_DIR, ConfigError, ensure_config_file, load_config
+from .config import FONTS_DIR, SERVER, STOP_FILE, WORK_DIR, ConfigError, ensure_config_file, load_config
 from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 
@@ -99,8 +99,12 @@ def check_setup(cfg, tools: Tools | None, problem: str = "") -> bool:
         subtitles = "ass" in tools.filters
         print(f"  captions:  {'OK (libass)' if subtitles else 'MISSING - this ffmpeg cannot draw captions (see README)'}")
         ok &= subtitles or not (cfg.captions.enabled or cfg.hook.enabled)
-        encoder_ok = cfg.video.codec in tools.encoders
-        print(f"  encoder:   {cfg.video.codec} {'OK' if encoder_ok else 'MISSING - change video.codec in config.yaml'}")
+        from .gpu import NAMES, pick_codec
+
+        codec = pick_codec(tools, cfg.video)
+        encoder_ok = codec in tools.encoders
+        where = f" ({NAMES[codec]}, picked by video.codec: auto)" if cfg.video.codec == "auto" and codec in NAMES else ""
+        print(f"  encoder:   {codec}{where} {'OK' if encoder_ok else 'MISSING - change video.codec in config.yaml'}")
         ok &= encoder_ok
     try:
         import faster_whisper  # noqa: F401
@@ -121,7 +125,25 @@ def check_setup(cfg, tools: Tools | None, problem: str = "") -> bool:
     return ok
 
 
-def run_bot(cfg, tools: Tools, *, once: bool = False, preload: bool = True) -> int:
+def _tray(cfg, bot: Bot, config: Path | None):
+    """The icon next to the clock for the background bot (Windows)."""
+    from .dashboard import get_token
+    from .phone import Action
+    from .tray import start_tray
+    from .ui import open_folder
+
+    return start_tray(
+        cfg,
+        dashboard_url=lambda: f"http://127.0.0.1:{cfg.dashboard.port}/?key={get_token(bot.credentials)}",
+        open_app=lambda: service.open_window(config),
+        open_folder=open_folder,
+        is_paused=lambda: bool(bot.uploads is not None and bot.uploads.paused),
+        toggle_pause=lambda: bot.inbox.put(Action("resume" if bot.uploads is not None and bot.uploads.paused else "pause")),
+        stop=bot.stop_event.set,
+    )
+
+
+def run_bot(cfg, tools: Tools, *, once: bool = False, preload: bool = True, tray: bool = False, config: Path | None = None) -> int:
     """Run the watcher in this process (background process, --run or --once)."""
     lock = service.InstanceLock()
     if not lock.acquire():
@@ -141,6 +163,7 @@ def run_bot(cfg, tools: Tools, *, once: bool = False, preload: bool = True) -> i
         log.info("Brainrot bot %s | ffmpeg: %s", __version__, tools.ffmpeg)
         log.info("Clips: %s | Gameplay: %s | Output: %s", cfg.paths.clips, cfg.paths.gameplay, cfg.paths.output)
         bot = Bot(cfg, tools)
+        icon = _tray(cfg, bot, config) if tray else None
         try:
             if once:
                 count = bot.run_once()
@@ -155,6 +178,9 @@ def run_bot(cfg, tools: Tools, *, once: bool = False, preload: bool = True) -> i
         except KeyboardInterrupt:
             log.info("Stopped.")
             return 130  # tells run_bot.bat / run_bot.sh that you stopped it on purpose (no auto-restart)
+        finally:
+            if icon is not None:
+                icon.stop()
         return 0
     finally:
         try:
@@ -181,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--retry-failed", action="store_true", help="give clips that failed another chance")
     mode.add_argument("--stop", action="store_true", help="stop the bot running in the background")
     mode.add_argument("--status", action="store_true", help="say whether the bot is running")
+    mode.add_argument("--dashboard", action="store_true", help="show the phone dashboard link and QR code")
     mode.add_argument("--background", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
@@ -191,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     try:
         ensure_config_file()
+        if args.config:
+            ensure_config_file(args.config)
     except OSError:
         pass
 
@@ -199,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
 
         return selftest()
 
-    plain = args.once or args.clip or args.check or args.retry_failed or args.run or args.stop or args.status or args.background or args.autostart
+    plain = (args.once or args.clip or args.check or args.retry_failed or args.run or args.stop or args.status or args.background
+             or args.autostart or args.dashboard)
     if not plain:
         from .app import run_app  # the menu; imported here so --background never loads UI code
 
@@ -224,6 +254,18 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         log.error("Problem in config: %s", exc)
         return 2
+    if args.dashboard:
+        from .credentials import Credentials
+        from .dashboard import dashboard_url, qr_text
+
+        url = dashboard_url(cfg, Credentials(cfg.paths.credentials))
+        if SERVER and not os.environ.get("BRAINROT_PUBLIC_URL"):
+            url = url.replace(url.split("/")[2], f"<this server's address>:{cfg.dashboard.port}")
+            print("Set BRAINROT_PUBLIC_URL in docker-compose.yml (e.g. http://192.168.1.50:8770) to get a QR code.")
+        else:
+            print(qr_text(url))
+        print(url)
+        return 0
     for folder in (cfg.paths.clips, cfg.paths.gameplay, cfg.paths.music, cfg.paths.output):
         folder.mkdir(parents=True, exist_ok=True)
 
@@ -250,8 +292,8 @@ def main(argv: list[str] | None = None) -> int:
             tools.ffmpeg,
         )
         return 2
-    if cfg.video.codec not in tools.encoders:
-        log.error("Your ffmpeg has no '%s' encoder. Change video.codec in config.yaml.", cfg.video.codec)
+    if cfg.video.codec != "auto" and cfg.video.codec not in tools.encoders:
+        log.error("Your ffmpeg has no '%s' encoder. Change video.codec in config.yaml (auto picks one that works).", cfg.video.codec)
         return 2
 
     if args.clip:
@@ -281,4 +323,4 @@ def main(argv: list[str] | None = None) -> int:
             service.start_background(args.config)
         return 0
 
-    return run_bot(cfg, tools, once=args.once)
+    return run_bot(cfg, tools, once=args.once, tray=args.background or args.autostart, config=args.config)

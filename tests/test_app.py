@@ -67,6 +67,7 @@ def test_update_config_adds_missing_keys_and_sections(tmp_path):
 
 
 def test_first_setup_writes_everything(config, tmp_path, monkeypatch):
+    monkeypatch.setattr(wizard, "synced_folders", lambda: {})  # no Google Drive / Dropbox here
     calls = []
     monkeypatch.setattr(service, "set_autostart", lambda enabled, config=None: calls.append(enabled))
     monkeypatch.setattr(wizard.ui, "open_folder", lambda path: calls.append(("open", path)))
@@ -261,3 +262,19 @@ def test_adding_a_link_from_the_menu(config, monkeypatch):
     typed(monkeypatch, "https://youtu.be/xyz", "2", "New: Show?")
     wizard.add_video_link(cfg)
     assert (cfg.paths.clips / "New Show" / "links.txt").read_text() == "https://youtu.be/xyz\n"
+
+
+def test_setup_offers_the_google_drive_folder(config, tmp_path, monkeypatch):
+    drive = tmp_path / "G" / "My Drive"
+    drive.mkdir(parents=True)
+    monkeypatch.setattr(wizard, "synced_folders", lambda: {"Google Drive": drive})
+    monkeypatch.setattr(service, "set_autostart", lambda enabled, config=None: None)
+    monkeypatch.setattr(wizard.ui, "open_folder", lambda path: None)
+    typed(monkeypatch, "1", "n", "n", "n", "n", "n", "n", "n", "n", "n",
+          "1",            # yes, in Google Drive
+          "", "", "",     # keep the suggested folders
+          "n")
+    cfg = wizard.run_setup(config)
+    base = drive / "Brainrot Bot"
+    assert (cfg.paths.gameplay, cfg.paths.clips, cfg.paths.output, cfg.paths.music) == (
+        base / "Gameplay", base / "Clips", base / "Reels", base / "Music")

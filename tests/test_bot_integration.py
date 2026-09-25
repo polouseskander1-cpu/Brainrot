@@ -383,3 +383,16 @@ def test_reels_wait_for_your_ok_on_the_phone(workspace, monkeypatch):
     bot._phone_actions()
     assert bot.uploads.run_due() == 1 and posted == ["ep1.mp4"]
     assert "Waiting for your OK: 0" not in bot._status_text() and "Posted in the last 24 h: 1" in bot._status_text()
+
+
+def test_command_line_check_and_single_clip(workspace, monkeypatch):
+    """The real entry point (what the .exe runs), with the default settings (video.codec: auto)."""
+    from brainrot_bot import cli
+    from brainrot_bot.transcribe import Transcriber
+
+    monkeypatch.setattr(Transcriber, "transcribe", lambda self, wav, should_stop=None: list(SPEECH))
+    monkeypatch.setattr(Transcriber, "load", lambda self: None)
+    config = str(workspace / "config.yaml")
+    assert cli.main(["--config", config, "--check"]) == 0
+    assert cli.main(["--config", config, "--clip", str(workspace / "clips" / "show" / "ep1.mp4")]) == 0
+    assert (workspace / "output" / "show" / "ep1.mp4").exists()

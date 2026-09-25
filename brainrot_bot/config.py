@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import re
 import shutil
 import sys
@@ -22,7 +23,9 @@ APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).re
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)).resolve()
 FONTS_DIR = RESOURCE_DIR / "fonts"
 WORK_DIR = APP_DIR / ".work"
-MODELS_DIR = APP_DIR / "models"
+# Server mode (Docker): the speech model is kept in the data folder so it survives updates of the image.
+MODELS_DIR = Path(os.environ["BRAINROT_MODELS_DIR"]) if os.environ.get("BRAINROT_MODELS_DIR") else APP_DIR / "models"
+SERVER = os.environ.get("BRAINROT_SERVER") == "1"  # running on a server / in Docker: no windows, no browser
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 STOP_FILE = APP_DIR / ".stop"
 LOCK_FILE = APP_DIR / ".bot.lock"
@@ -61,7 +64,7 @@ DEFAULTS: dict[str, Any] = {
         "snap_top": True,
         "top_fill": "blur",
         "layout": "split",
-        "codec": "libx264",
+        "codec": "auto",
         "crf": 19,
         "preset": "medium",
         "bitrate": "12M",
@@ -161,6 +164,15 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "similarity": 0.7,
     },
+    "cloud": {
+        "remote": "",
+        "every_minutes": 5,
+    },
+    "dashboard": {
+        "enabled": True,
+        "port": 8770,
+        "lan": True,
+    },
     "phone": {
         "telegram": False,
         "discord": False,
@@ -174,6 +186,8 @@ DEFAULTS: dict[str, Any] = {
         "run_mode": "background",
         "autostart": False,
         "autostart_delay": 15,
+        "tray": True,
+        "auto_update": "ask",
         "setup_done": False,
     },
     "upload": {
@@ -397,6 +411,17 @@ def _validate(c: dict) -> None:
     d["enabled"] = bool(d["enabled"])
     d["similarity"] = _num("dedupe.similarity", d["similarity"], 0.3, 1.0)
 
+    cl = c["cloud"]
+    cl["remote"] = str(cl["remote"] or "").strip()
+    if cl["remote"] and ":" not in cl["remote"]:
+        raise ConfigError("'cloud.remote' must be an rclone remote like gdrive:Brainrot (see rclone config)")
+    cl["every_minutes"] = _num("cloud.every_minutes", cl["every_minutes"], 1, 1440)
+
+    db = c["dashboard"]
+    db["enabled"] = bool(db["enabled"])
+    db["lan"] = bool(db["lan"])
+    db["port"] = _num("dashboard.port", db["port"], 1024, 65535, integer=True)
+
     ph = c["phone"]
     for key in ("telegram", "discord", "approval", "preview", "notify_posted", "notify_errors"):
         ph[key] = bool(ph[key])
@@ -411,6 +436,8 @@ def _validate(c: dict) -> None:
     app["autostart"] = bool(app["autostart"])
     app["autostart_delay"] = _num("app.autostart_delay", app["autostart_delay"], 0, 600)
     app["setup_done"] = bool(app["setup_done"])
+    app["tray"] = bool(app["tray"])
+    app["auto_update"] = _choice("app.auto_update", app["auto_update"], ("ask", "auto", "off"))
 
     up = c["upload"]
     for platform in ("youtube", "tiktok", "instagram", "facebook", "x", "pinterest"):
@@ -454,11 +481,13 @@ def _validate(c: dict) -> None:
         raise ConfigError("'upload.meta_api_version' must look like v25.0")
 
 
-def ensure_config_file() -> None:
-    """The .exe ships a default config.yaml inside its bundle; put an editable copy next to the exe."""
-    bundled = RESOURCE_DIR / "config.yaml"
-    if not DEFAULT_CONFIG_PATH.exists() and bundled.exists() and bundled != DEFAULT_CONFIG_PATH:
-        shutil.copyfile(bundled, DEFAULT_CONFIG_PATH)
+def ensure_config_file(path: Path | None = None) -> None:
+    """The .exe ships a default config.yaml inside its bundle; put an editable copy next to the exe
+    (or where --config points, e.g. /data/config.yaml on a server, the first time)."""
+    target = Path(path) if path else DEFAULT_CONFIG_PATH
+    source = next((p for p in (RESOURCE_DIR / "config.yaml", APP_DIR / "config.yaml") if p.exists() and p.resolve() != target.resolve()), None)
+    if not target.exists() and source is not None and target.parent.is_dir():
+        shutil.copyfile(source, target)
 
 
 def load_config(path: Path | None = None) -> SimpleNamespace:
@@ -509,6 +538,8 @@ def load_config(path: Path | None = None) -> SimpleNamespace:
 
 
 def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_yaml_scalar(v) for v in value) + "]"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):

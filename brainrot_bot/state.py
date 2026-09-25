@@ -26,6 +26,7 @@ class State:
             "last_post": {},
             "links": {},
             "fingerprints": [],
+            "update": {},
         }
         if path.exists():
             try:

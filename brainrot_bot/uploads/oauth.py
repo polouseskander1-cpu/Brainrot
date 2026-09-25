@@ -45,6 +45,8 @@ def browser_login(
     because browsers may send localhost there."""
     state = secrets.token_urlsafe(16)
     received: dict[str, str] = {}
+    if headless():
+        return _paste_login(build_url, state, port or 8765, path, host, printer)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -116,3 +118,32 @@ def browser_login(
 
 class _IPv6Server(HTTPServer):
     address_family = socket.AF_INET6
+
+
+def headless() -> bool:
+    """A server without a screen (Docker; or set BRAINROT_SERVER=1 over SSH): log in with a browser elsewhere."""
+    import os
+
+    return os.environ.get("BRAINROT_SERVER") == "1"
+
+
+def _paste_login(build_url: Callable[[str, str], str], state: str, port: int, path: str, host: str,
+                 printer: Callable[[str], None]) -> tuple[dict[str, str], str]:
+    """Open the link on any phone or computer, log in, then paste back the address the browser ends up on."""
+    from urllib.parse import parse_qs, urlparse
+
+    redirect_uri = f"http://{host}:{port}{path}"
+    printer("Open this link on your phone or computer and log in:")
+    printer(build_url(redirect_uri, state))
+    printer("At the end the browser shows an error page (that's expected, this server isn't that computer).")
+    printer("Copy the whole address from the address bar (it starts with " + redirect_uri + "?...) and paste it here.")
+    try:
+        pasted = input("Address: ").strip()
+    except EOFError:
+        pasted = ""
+    params = {key: values[0] for key, values in parse_qs(urlparse(pasted).query).items()}
+    if "error" in params:
+        raise UploadError(f"login was cancelled or refused: {params.get('error_description') or params['error']}", retry=False)
+    if params.get("state") != state or not params.get("code"):
+        raise UploadError("that address doesn't contain the login (paste the full address from the address bar)", retry=False)
+    return params, redirect_uri

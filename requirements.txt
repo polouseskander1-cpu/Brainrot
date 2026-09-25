@@ -4,3 +4,8 @@ PyYAML>=6.0
 yt-dlp[default]>=2026.8.19
 # Optional AI helper (Claude). Needs Python 3.10 or newer; on older Python the bot uses its built-in rules.
 anthropic>=1.8,<2; python_version >= "3.10"
+# QR code for the phone dashboard.
+segno>=1.6
+# The icon next to the clock (Windows).
+pystray>=0.19; sys_platform == "win32"
+Pillow>=10; sys_platform == "win32"
