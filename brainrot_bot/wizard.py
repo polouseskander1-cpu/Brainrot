@@ -8,15 +8,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import service, ui
+from .ai import CREDENTIAL_KEY as AI_KEY
+from .ai import KEY_PAGE, check_key
 from .config import FROZEN, load_config, update_config_file
 from .credentials import Credentials
+from .links import add_link
 from .uploads import PLATFORMS, UploadError, platform_name
 from .uploads import facebook, instagram, tiktok, youtube
 
 log = logging.getLogger("brainrot")
 
 GUIDE = "https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md"
-TOTAL_STEPS = 4
+TOTAL_STEPS = 5
 
 
 def suggested_folders(cfg: SimpleNamespace) -> dict[str, Path]:
@@ -182,6 +185,70 @@ def setup_platforms(cfg: SimpleNamespace, creds: Credentials) -> dict[str, bool]
     return enabled
 
 
+# ---------------------------------------------------------------- AI and links
+
+
+def connect_ai(cfg: SimpleNamespace, creds: Credentials) -> bool:
+    """Ask for an Anthropic API key. Returns True if one is connected."""
+    saved = creds.get(AI_KEY)
+    ui.say("Claude (AI) can pick the best moments of long videos, write the hook, title, caption and")
+    ui.say("hashtags of every reel, and translate captions. Without it the bot uses built-in rules.")
+    ui.say(ui.dim("It uses your own Anthropic API key: you pay Anthropic per use, usually a few cents per reel."))
+    if saved:
+        choice = ui.choose(["Keep the connected key", "Use a different key", "Disconnect the AI"], default=1)
+        if choice == 1:
+            return True
+        if choice == 3:
+            creds.remove(AI_KEY)
+            ui.say("  AI disconnected.")
+            return False
+    elif not ui.ask_yes_no("Connect Claude (AI)?", default=False):
+        return False
+    _instructions([
+        f"  1. Open {KEY_PAGE} and sign in (or sign up)",
+        "  2. Add a little credit under Billing",
+        "  3. API keys > Create key, then copy it",
+    ])
+    while True:
+        key = ui.ask("Paste the key (starts with sk-ant-), or 'skip'")
+        if _skip(key):
+            return bool(saved)
+        problem = check_key(key.strip(), cfg.ai.model)
+        if not problem:
+            creds.set(AI_KEY, {"api_key": key.strip(), "account": "Anthropic API"})
+            ui.say(ui.green("  AI connected."))
+            return True
+        ui.say(ui.red(f"  That didn't work: {problem}"))
+        if not ui.ask_yes_no("  Try again?", default=True):
+            return bool(saved)
+
+
+def add_video_link(cfg: SimpleNamespace) -> None:
+    """Menu: paste a link, pick the folder (podcast / influencer) it belongs to."""
+    ui.banner("add a video link")
+    ui.say("Paste a link to a video (YouTube, TikTok, Instagram, X...). A playlist or channel link downloads")
+    ui.say(f"the newest {cfg.links.playlist_limit} videos. Long videos (podcasts) become several reels of their best moments.")
+    url = ui.ask("Link (or Enter to go back)")
+    if not url.lower().startswith(("http://", "https://")):
+        if url:
+            ui.say(ui.red("  That doesn't look like a link (it should start with https://)."))
+            ui.pause()
+        return
+    root = cfg.paths.clips
+    root.mkdir(parents=True, exist_ok=True)
+    folders = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_", "~")))
+    ui.say("Which folder (podcast / influencer) is it for?")
+    choice = ui.choose(folders + ["A new folder..."], default=1)
+    if choice <= len(folders):
+        folder = root / folders[choice - 1]
+    else:
+        name = ui.ask_required("Name of the new folder (e.g. the podcast's name)").strip().strip("/\\")
+        folder = root / "".join(ch for ch in name if ch not in '<>:"/\\|?*')
+    add_link(folder, url)
+    ui.say(ui.green(f"  Added to {folder.name}/links.txt. The bot downloads it within a minute (while it's running)."))
+    ui.pause()
+
+
 # ---------------------------------------------------------------- the whole setup
 
 
@@ -212,7 +279,10 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     ui.step(3, TOTAL_STEPS, "Auto-posting (optional)")
     enabled = setup_platforms(cfg, creds)
 
-    ui.step(4, TOTAL_STEPS, "Your folders")
+    ui.step(4, TOTAL_STEPS, "AI helper (optional)")
+    ai_on = connect_ai(cfg, creds)
+
+    ui.step(5, TOTAL_STEPS, "Your folders")
     suggested = suggested_folders(cfg)
     gameplay = ui.ask_path("Folder for your GAMEPLAY videos", suggested["gameplay"])
     clips = ui.ask_path("Folder for your CLIPS (one subfolder per podcast / influencer)", suggested["clips"])
@@ -231,6 +301,7 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
         },
         "app": {"run_mode": run_mode, "autostart": autostart, "setup_done": True},
         "upload": enabled,
+        **({"ai": {"enabled": True}} if ai_on else {}),
     })
     try:
         service.set_autostart(autostart, config=config_path)
@@ -253,6 +324,7 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     posting = [platform_name(k) for k, on in enabled.items() if on]
     ui.say()
     ui.say("  Posting to: " + (", ".join(posting) if posting else "nowhere yet (reels are just saved)"))
+    ui.say("  AI: " + ("Claude picks moments and writes hooks, captions and hashtags" if ai_on else "off (built-in rules)"))
     ui.say("  Runs: " + ("24/7 in the background" if run_mode == "background" else "while the window is open")
            + (f", starts {delay}s after you log in" if autostart else ""))
     ui.say()

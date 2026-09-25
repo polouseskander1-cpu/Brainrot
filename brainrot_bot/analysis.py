@@ -69,11 +69,10 @@ WORD_TO_EMOJI = {word: code for code, words in EMOJI_WORDS.items() for word in w
 
 # Words that make a phrase worth emphasizing (color, zoom, sound effect).
 STRONG_WORDS = set("""
-never always nobody everyone everything nothing secret truth lie lies crazy insane biggest best worst
-most least million billion thousand money rich broke free dead death kill shocking shocked amazing
-incredible impossible unbelievable literally actually seriously literally huge massive tiny perfect
-mistake mistakes wrong right important dangerous illegal banned forbidden fired quit hate love
-first last only must need exactly instantly immediately forever
+never nobody secret secrets truth lie lies crazy insane biggest best worst million millions billion billions thousand
+money rich broke dead death kill killed shocking shocked amazing incredible impossible unbelievable huge massive
+perfect mistake mistakes wrong important dangerous illegal banned forbidden fired quit hate forever instantly
+immediately destroyed disaster genius terrifying brutal
 """.split())
 
 # Common English swear words (plus simple variants). Add your own in config.yaml (edit.censor_words).
@@ -167,20 +166,27 @@ class Loudness:
 
     @classmethod
     def from_wav(cls, path: Path) -> "Loudness":
+        """Read a 16-bit WAV a minute at a time (a 3-hour podcast would not fit in memory at once)."""
         import numpy as np
 
+        levels: list[float] = []
         with wave.open(str(path), "rb") as handle:
-            rate, width = handle.getframerate(), handle.getsampwidth()
-            data = handle.readframes(handle.getnframes())
-        if width != 2:
-            return cls([])
-        samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
-        hop = max(1, int(rate * cls.HOP))
-        count = len(samples) // hop
-        if count == 0:
-            return cls([])
-        frames = samples[: count * hop].reshape(count, hop)
-        return cls([float(x) for x in np.sqrt((frames ** 2).mean(axis=1))])
+            rate, width, channels = handle.getframerate(), handle.getsampwidth(), handle.getnchannels()
+            if width != 2 or channels < 1:
+                return cls([])
+            hop = max(1, int(rate * cls.HOP))
+            while True:
+                data = handle.readframes(hop * 600)
+                if not data:
+                    break
+                samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+                samples = samples[: len(samples) // channels * channels].reshape(-1, channels).mean(axis=1)
+                count = len(samples) // hop
+                if count == 0:
+                    break
+                frames = samples[: count * hop].reshape(count, hop)
+                levels.extend(float(x) for x in np.sqrt((frames ** 2).mean(axis=1)))
+        return cls(levels)
 
     def level(self, start: float, end: float) -> float:
         a, b = int(start / self.HOP), max(int(start / self.HOP) + 1, int(math.ceil(end / self.HOP)))

@@ -40,9 +40,10 @@ def make_clip(path, seconds, size="320x180", silent=None):
 
 
 class FakeTranscriber:
-    def __init__(self, words):
+    def __init__(self, words, language="en"):
         self.words = words
         self.calls = 0
+        self.last_language = language
 
     def load(self):
         pass
@@ -187,3 +188,126 @@ def test_broken_clip_is_marked_failed(workspace):
     entry = bot.state.clips["show/broken.mp4"]
     assert entry["status"] == "failed" and entry["attempts"] == 1
     assert not (workspace / "output" / "show" / "broken.mp4").exists()
+
+
+# ------------------------------------------------------------------ long videos, AI, translations, duplicates, links
+
+LONG_TALK_CONFIG = "moments:\n  min_source_minutes: 1\n  count: 2\n  min_seconds: 8\n  max_seconds: 15\n"
+
+
+def long_talk():
+    """About 70 seconds of talk: filler, a strong bit, filler, another strong bit, filler."""
+    words, t = [], 0.5
+    filler = ["so", "yeah", "we", "were", "talking", "about", "stuff."]
+    script = (filler * 3
+              + "Why do most people never get rich? They spend every dollar they earn. The secret is to invest ten percent forever!".split()
+              + filler * 3
+              + "What is the biggest mistake? Never quit your job before you make a million dollars!".split()
+              + filler * 2)
+    for token in script:
+        words.append(Word(token, t, t + 0.3))
+        t += 0.4 + (0.5 if token.endswith((".", "?", "!")) else 0)
+    return words
+
+
+def test_long_video_becomes_reels_of_its_best_moments(workspace):
+    (workspace / "clips" / "show" / "ep1.mp4").unlink()
+    make_clip(workspace / "clips" / "show" / "episode.mp4", 70)
+    (workspace / "config.yaml").write_text(BASE_CONFIG + LONG_TALK_CONFIG, encoding="utf-8")
+    bot = new_bot(workspace, long_talk())
+    assert bot.run_once() == 1
+    reels = sorted((workspace / "output" / "show").glob("*.mp4"))
+    assert [r.name for r in reels] == ["episode_moment1.mp4", "episode_moment2.mp4"]
+    durations = [probe(TOOLS, r).duration for r in reels]
+    assert all(7.5 <= d <= 16 for d in durations)
+    srt = (workspace / "output" / "show" / "episode_moment1.srt").read_text(encoding="utf-8")
+    assert "Why do most people never get rich?" in srt  # the best moment is the strong bit
+
+
+def connect_fake_ai(workspace):
+    from brainrot_bot.credentials import Credentials
+
+    Credentials(workspace / "credentials").set("anthropic", {"api_key": "sk-ant-test"})
+
+
+def test_ai_picks_the_moments_and_writes_hooks_and_captions(workspace, fake_claude):
+    (workspace / "clips" / "show" / "ep1.mp4").unlink()
+    (workspace / "clips" / "show" / "title.txt").unlink()
+    make_clip(workspace / "clips" / "show" / "episode.mp4", 70)
+    (workspace / "config.yaml").write_text(BASE_CONFIG + LONG_TALK_CONFIG, encoding="utf-8")
+    connect_fake_ai(workspace)
+    words = long_talk()
+    fake_claude.moments = [{"start_sentence": 5, "end_sentence": 7, "hook": "Nobody tells you this", "score": 9, "why": "money"}]
+    bot = new_bot(workspace, words)
+    from brainrot_bot.gameplay import scan_library
+    from brainrot_bot.media import VIDEO_EXTS
+
+    gameplay = scan_library(workspace / "gameplay", VIDEO_EXTS, TOOLS, {})
+    rendered = bot.make_reels(workspace / "clips" / "show" / "episode.mp4", gameplay)
+    assert [r.suffix for r in rendered] == ["_moment1"]
+    post = rendered[0].post
+    assert post.title == "The day he lost it all" and post.description == "Would you have made the same choice?"
+    assert post.hashtags.split()[-3:] == ["#Show", "#money", "#story"]
+    systems = [r["body"]["system"] for r in fake_claude.requests]
+    assert systems[0].startswith("You are an experienced short-form video editor")
+    assert "[5] " in fake_claude.requests[0]["body"]["messages"][0]["content"]
+    assert len(fake_claude.requests) == 2  # moments + copy
+
+
+def test_translated_reel(workspace, fake_claude):
+    (workspace / "config.yaml").write_text(BASE_CONFIG.replace("captions:\n", "captions:\n  translate_to: [es, en]\n"), encoding="utf-8")
+    connect_fake_ai(workspace)
+    bot = new_bot(workspace)
+    assert bot.run_once() == 1
+    out = workspace / "output" / "show"
+    assert sorted(p.name for p in out.glob("*.mp4")) == ["ep1.mp4", "ep1_es.mp4"]  # English is the spoken language
+    assert "ES: Hello there, friend." in (out / "ep1_es.srt").read_text(encoding="utf-8")
+    assert abs(probe(TOOLS, out / "ep1_es.mp4").duration - probe(TOOLS, out / "ep1.mp4").duration) < 0.05
+    assert (out / "ep1_es.jpg").exists()
+
+
+def test_duplicates_are_skipped(workspace):
+    import shutil
+
+    # 15 seconds of sound that gets louder and quieter (like speech), so it has a recognizable "shape".
+    clip = workspace / "clips" / "show" / "ep1.mp4"
+    ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25", "-f", "lavfi",
+           "-i", "sine=f=300,volume=volume='0.1+0.4*abs(sin(2*PI*t*0.37))*abs(sin(2*PI*t*1.1))':eval=frame",
+           "-t", "15", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(clip))
+    bot = new_bot(workspace)
+    assert bot.run_once() == 1
+    # An exact copy in another folder, and a re-encoded copy (different file, same sound).
+    (workspace / "clips" / "other").mkdir()
+    shutil.copyfile(clip, workspace / "clips" / "other" / "copy.mp4")
+    ffmpeg("-i", str(clip), "-vf", "scale=256:144", "-c:v", "libx264", "-crf", "30",
+           "-preset", "ultrafast", "-c:a", "aac", "-b:a", "96k", str(workspace / "clips" / "other" / "reencoded.mp4"))
+    make_clip(workspace / "clips" / "other" / "new.mp4", 15, silent=(1.0, 2.0))  # different sound: not a duplicate
+    bot = new_bot(workspace)
+    assert bot.run_once() == 1
+    clips = bot.state.clips
+    assert clips["other/copy.mp4"]["status"] == "duplicate" and clips["other/copy.mp4"]["same_as"] == "show/ep1.mp4"
+    assert clips["other/reencoded.mp4"]["status"] == "duplicate"
+    assert clips["other/new.mp4"]["status"] == "done"
+    assert sorted(p.name for p in (workspace / "output" / "other").glob("*.mp4")) == ["new.mp4"]
+    assert new_bot(workspace).run_once() == 0  # duplicates are remembered, not checked again
+
+
+def test_links_are_downloaded_and_made_into_reels(workspace, monkeypatch):
+    import shutil
+
+    from brainrot_bot.links import add_link
+
+    source = workspace / "source.mp4"
+    shutil.move(workspace / "clips" / "show" / "ep1.mp4", source)
+
+    def fake_download(url, folder, tools, cfg, should_stop):
+        target = folder / "Great Episode [abc123].mp4"
+        shutil.copyfile(source, target)
+        return [target]
+
+    monkeypatch.setattr("brainrot_bot.links.download", fake_download)
+    add_link(workspace / "clips" / "show", "https://www.youtube.com/watch?v=abc123")
+    bot = new_bot(workspace)
+    assert bot.run_once() == 1
+    assert (workspace / "output" / "show" / "Great Episode [abc123].mp4").exists()
+    assert new_bot(workspace).run_once() == 0  # the link is not downloaded again

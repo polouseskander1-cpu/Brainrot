@@ -1,2 +1,6 @@
 faster-whisper>=1.1.0
 PyYAML>=6.0
+# Video links (YouTube, TikTok, Instagram...). "default" adds yt-dlp-ejs, needed for YouTube together with Deno.
+yt-dlp[default]>=2026.8.19
+# Optional AI helper (Claude). Needs Python 3.10 or newer; on older Python the bot uses its built-in rules.
+anthropic>=1.8,<2; python_version >= "3.10"

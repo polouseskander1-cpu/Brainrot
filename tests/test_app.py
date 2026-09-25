@@ -75,6 +75,7 @@ def test_first_setup_writes_everything(config, tmp_path, monkeypatch):
           "2",            # run only while the window is open
           "",             # start at login: default yes on first setup
           "n", "n", "n", "n",  # skip all platforms
+          "n",            # no AI
           f'"{gameplay}"', str(clips), str(reels),  # quotes from "Copy as path" are fine
           "y")            # open the folders
     cfg = wizard.run_setup(config)
@@ -210,3 +211,29 @@ def test_packaged_app_starts_the_windowless_exe_at_login(monkeypatch, tmp_path):
     assert service.app_command(["--autostart"], windowless=True) == [str(tmp_path / "BrainrotBot-background.exe"), "--autostart"]
     assert service.app_command([], windowless=False, config=tmp_path / "other.yaml") == [
         str(tmp_path / "BrainrotBot.exe"), "--config", str((tmp_path / "other.yaml").resolve())]
+
+
+def test_connecting_the_ai_checks_the_key(config, monkeypatch, fake_claude):
+    cfg = load_config(config)
+    creds = Credentials(cfg.paths.credentials)
+    fake_claude.status = 401
+    typed(monkeypatch, "y", "sk-ant-wrong", "y", "skip")  # a refused key, try again, give up
+    assert not wizard.connect_ai(cfg, creds) and not creds.get("anthropic")
+    fake_claude.status = 200
+    typed(monkeypatch, "y", "  sk-ant-good  ")
+    assert wizard.connect_ai(cfg, creds)
+    assert creds.get("anthropic")["api_key"] == "sk-ant-good"
+    typed(monkeypatch, "3")  # disconnect
+    assert not wizard.connect_ai(cfg, creds) and not creds.get("anthropic")
+
+
+def test_adding_a_link_from_the_menu(config, monkeypatch):
+    cfg = load_config(config)
+    (cfg.paths.clips / "Podcast A").mkdir(parents=True)
+    monkeypatch.setattr(wizard.ui, "pause", lambda *a: None)
+    typed(monkeypatch, "https://youtu.be/abc", "1")
+    wizard.add_video_link(cfg)
+    assert (cfg.paths.clips / "Podcast A" / "links.txt").read_text() == "https://youtu.be/abc\n"
+    typed(monkeypatch, "https://youtu.be/xyz", "2", "New: Show?")
+    wizard.add_video_link(cfg)
+    assert (cfg.paths.clips / "New Show" / "links.txt").read_text() == "https://youtu.be/xyz\n"

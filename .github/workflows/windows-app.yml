@@ -66,12 +66,18 @@ jobs:
       - name: Build the app
         run: pyinstaller packaging/brainrot.spec --noconfirm
 
-      - name: Add ffmpeg and docs
+      - name: Add ffmpeg, Deno and docs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $app = "dist/BrainrotBot"
           New-Item -ItemType Directory -Force "$app/ffmpeg" | Out-Null
           Copy-Item "$env:FFMPEG_BIN/ffmpeg.exe", "$env:FFMPEG_BIN/ffprobe.exe" "$app/ffmpeg/"
+          # Deno runs YouTube's JavaScript for yt-dlp (video links).
+          gh release download -R denoland/deno -p "deno-x86_64-pc-windows-msvc.zip" -D deno_dl
+          Expand-Archive deno_dl/deno-x86_64-pc-windows-msvc.zip -DestinationPath "$app/deno"
+          & "$app/deno/deno.exe" --version
           $license = Get-ChildItem ffmpeg_dl/x -Recurse -Filter "LICENSE*" | Select-Object -First 1
           if ($license) { Copy-Item $license.FullName "$app/ffmpeg/LICENSE.txt" }
           Copy-Item packaging/README.txt, packaging/THIRD_PARTY_NOTICES.txt "$app/"
@@ -111,7 +117,8 @@ jobs:
           Write-Host "== setup wizard + background bot"
           $wiz = New-Item -ItemType Directory -Force ci/wiz
           (Get-Content test_app/_internal/config.yaml) -replace '^  model: small', '  model: tiny' | Set-Content -Encoding utf8 ci/wiz/config.yaml
-          $answers = @("1", "n", "n", "n", "n", "n", "$($wiz.FullName)\Gameplay", "$($wiz.FullName)\Clips", "$($wiz.FullName)\Reels", "n", "0") -join "`n"
+          # run mode, start at login, 4 platforms, AI, 3 folders, open folders, quit the menu
+          $answers = @("1", "n", "n", "n", "n", "n", "n", "$($wiz.FullName)\Gameplay", "$($wiz.FullName)\Clips", "$($wiz.FullName)\Reels", "n", "0") -join "`n"
           $answers | & $exe --config ci/wiz/config.yaml
           & $exe --status
           Copy-Item ci/gameplay/run.mp4 "$($wiz.FullName)\Gameplay\"
@@ -122,6 +129,19 @@ jobs:
           Get-Content "$($wiz.FullName)\logs\bot.log" -Tail 15
           & $exe --stop
           if (-not (Test-Path $reel)) { throw "the background bot didn't make the reel" }
+
+          Write-Host "== video link (yt-dlp inside the app, video served from this machine)"
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8799", "--bind", "127.0.0.1", "--directory", "ci" -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          $links = New-Item -ItemType Directory -Force ci/linkws
+          New-Item -ItemType Directory -Force ci/linkws/clips/Show | Out-Null
+          "http://127.0.0.1:8799/clip.mp4" | Set-Content -Encoding utf8 ci/linkws/clips/Show/links.txt
+          "folders:`n  clips: clips`n  gameplay: $($ci.FullName)\gameplay`n  output: output`ncaptions:`n  model: tiny`nvideo:`n  preset: veryfast`napp:`n  setup_done: true`nwatch:`n  settle_seconds: 1`n" | Set-Content -Encoding utf8 ci/linkws/config.yaml
+          & $exe --config ci/linkws/config.yaml --once
+          Stop-Process $server
+          $made = Get-ChildItem ci/linkws/output/Show -Filter *.mp4 -ErrorAction SilentlyContinue
+          if (-not $made) { Get-Content ci/linkws/logs/bot.log -Tail 20; throw "the link was not downloaded and made into a reel" }
+          $made | Format-Table Name, Length
           Write-Host "APP TEST PASSED"
 
       - name: Zip

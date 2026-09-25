@@ -4,7 +4,7 @@
 #   BrainrotBot-background.exe  the same app without a window (background mode, start at login)
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
@@ -14,7 +14,10 @@ datas = [
     (os.path.join(ROOT, "config.yaml"), "."),
 ]
 datas += collect_data_files("faster_whisper")  # voice-activity model used while transcribing
-for package in ("huggingface_hub", "tqdm", "tokenizers", "faster_whisper", "ctranslate2", "numpy", "av", "onnxruntime", "PyYAML"):
+datas += collect_data_files("yt_dlp_ejs")  # YouTube challenge solver scripts (run by the bundled Deno)
+datas += collect_data_files("certifi")
+for package in ("huggingface_hub", "tqdm", "tokenizers", "faster_whisper", "ctranslate2", "numpy", "av", "onnxruntime", "PyYAML",
+                "yt-dlp", "yt-dlp-ejs", "anthropic", "httpx2", "pydantic", "pydantic_core"):
     try:
         datas += copy_metadata(package)
     except Exception:
@@ -26,7 +29,8 @@ a = Analysis(
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["brainrot_bot.app", "brainrot_bot.wizard", "brainrot_bot.selftest"],
+    hiddenimports=["brainrot_bot.app", "brainrot_bot.wizard", "brainrot_bot.selftest", "yt_dlp_ejs"]
+    + collect_submodules("yt_dlp.extractor") + collect_submodules("anthropic.types"),
     excludes=["tkinter", "matplotlib", "IPython", "pytest", "PIL", "cryptography", "OpenSSL"],
     noarchive=False,
 )

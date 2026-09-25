@@ -146,6 +146,7 @@ class RenderJob:
     sfx_track: Path | None = None
     mute: list[tuple[float, float]] = field(default_factory=list)  # reel times where the voice is silenced
     duck_music: bool = True
+    normalize: bool = True  # False for silent sound (loudness normalization would divide by zero)
 
     def kept(self) -> list[tuple[float, float]]:
         return self.intervals or [(self.clip_start, self.clip_start + self.duration)]
@@ -365,7 +366,7 @@ def build_command(job: RenderJob, cfg: SimpleNamespace) -> list[str]:
         idx = inputs.add("-f", "lavfi", "-t", duration, "-i", f"anullsrc=r={AUDIO_RATE}:cl=stereo")
         voice_src = f"[{idx}:a]"
     chain = "anull"
-    if cfg.audio.normalize and job.clip_has_audio:
+    if cfg.audio.normalize and job.clip_has_audio and job.normalize:
         chain = (
             "acompressor=threshold=-24dB:ratio=3:attack=5:release=120:knee=4"
             f",loudnorm=I={cfg.audio.loudness:g}:TP=-1.5:LRA=11,aresample={AUDIO_RATE}"

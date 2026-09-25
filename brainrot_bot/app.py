@@ -12,12 +12,13 @@ from types import SimpleNamespace
 from . import __version__, service, ui
 from .bot import Bot
 from .cli import add_file_logging, lower_priority
-from .config import DEFAULT_CONFIG_PATH, STOP_FILE, WORK_DIR, ConfigError, load_config
+from .ai import CREDENTIAL_KEY as AI_KEY
+from .config import DEFAULT_CONFIG_PATH, STOP_FILE, WORK_DIR, ConfigError, load_config, update_config_file
 from .credentials import Credentials
 from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 from .uploads import PLATFORMS, platform_name
-from .wizard import run_setup
+from .wizard import add_video_link, connect_ai, run_setup
 
 log = logging.getLogger("brainrot")
 
@@ -84,8 +85,10 @@ def _status_lines(cfg: SimpleNamespace, running: bool, in_window: bool) -> list[
     clips_state = state.get("clips", {})
     done = sum(1 for e in clips_state.values() if e.get("status") == "done")
     failed = sum(1 for e in clips_state.values() if e.get("status") == "failed")
+    duplicates = sum(1 for e in clips_state.values() if e.get("status") == "duplicate")
     clip_files = list_media(cfg.paths.clips, VIDEO_EXTS)
-    waiting = sum(1 for p in clip_files if clips_state.get(p.relative_to(cfg.paths.clips).as_posix(), {}).get("status") not in ("done", "failed"))
+    waiting = sum(1 for p in clip_files if clips_state.get(p.relative_to(cfg.paths.clips).as_posix(), {}).get("status") not in ("done", "failed", "duplicate"))
+    links_waiting = sum(1 for i in state.get("links", {}).values() if i.get("status") == "pending")
     gameplay = len(list_media(cfg.paths.gameplay, VIDEO_EXTS))
     music = len(list_media(cfg.paths.music, AUDIO_EXTS))
 
@@ -98,11 +101,14 @@ def _status_lines(cfg: SimpleNamespace, running: bool, in_window: bool) -> list[
         f"  Status:      {status}",
         f"  Auto-start:  {autostart}",
         f"  Gameplay:    {cfg.paths.gameplay}  " + ui.dim(f"({gameplay} videos)") + ("" if gameplay else ui.red("  <- add some!")),
-        f"  Clips:       {cfg.paths.clips}  " + ui.dim(f"({waiting} waiting)"),
-        f"  Reels:       {cfg.paths.output}  " + ui.dim(f"({done} clips done" + (f", {failed} failed" if failed else "") + ")"),
+        f"  Clips:       {cfg.paths.clips}  " + ui.dim(f"({waiting} waiting" + (f", {links_waiting} links to download" if links_waiting else "") + ")"),
+        f"  Reels:       {cfg.paths.output}  " + ui.dim(
+            f"({done} clips done" + (f", {failed} failed" if failed else "") + (f", {duplicates} duplicates skipped" if duplicates else "") + ")"),
         f"  Music:       {cfg.paths.music}  " + ui.dim(f"({music} tracks, optional)"),
     ]
     creds = Credentials(cfg.paths.credentials)
+    ai_on = cfg.ai.enabled and bool(creds.get(AI_KEY))
+    lines.append("  AI:          " + (f"Claude ({cfg.ai.model})" if ai_on else ui.dim("off (built-in rules)")))
     uploads = state.get("uploads", {})
     blocked = state.get("upload_blocked", {})
     posting = []
@@ -239,45 +245,61 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart) -> int:
             ui.say(line)
         ui.say(ui.dim("-" * ui.WIDTH))
         failed = sum(1 for e in _load_state(cfg).get("clips", {}).values() if e.get("status") == "failed")
-        items = [
-            ("1", "Open the gameplay folder"),
-            ("2", "Open the clips folder"),
-            ("3", "Open the reels folder"),
-            ("4", "Watch live activity"),
-            ("5", "Connect accounts / auto-posting"),
-            ("6", "Settings (run the setup again)"),
-            ("7", "Stop the bot" if running else "Start the bot"),
-        ]
-        if failed:
-            items.append(("8", f"Try the {failed} failed clip(s) again"))
-        items.append(("0", "Quit (stops the bot)" if in_window.running else "Close this window (the bot keeps running)" if running else "Close"))
-        for key, text in items:
-            ui.say(f"  {ui.yellow(key)}) {text}")
-        choice = ui.ask("\nChoose", "")
-        if choice == "1":
-            ui.open_folder(cfg.paths.gameplay)
-        elif choice == "2":
-            ui.open_folder(cfg.paths.clips)
-        elif choice == "3":
-            ui.open_folder(cfg.paths.output)
-        elif choice == "4":
-            _watch_log(cfg)
-        elif choice in ("5", "6"):
-            run_setup(config_path, only_platforms=choice == "5")
+        ai_on = bool(Credentials(cfg.paths.credentials).get(AI_KEY))
+
+        def settings_changed() -> None:
             if running:
                 restart()
             else:
                 ui.pause()
-        elif choice == "7":
+
+        def accounts() -> None:
+            run_setup(config_path, only_platforms=True)
+            settings_changed()
+
+        def ai() -> None:
+            ui.banner("AI helper")
+            creds = Credentials(cfg.paths.credentials)
+            if connect_ai(cfg, creds) and not cfg.ai.enabled:
+                update_config_file(config_path, {"ai": {"enabled": True}})
+            settings_changed()
+
+        def settings() -> None:
+            run_setup(config_path)
+            settings_changed()
+
+        def toggle() -> None:
             if running:
                 restart(stop_only=True)
             else:
                 start(cfg)
-        elif choice == "8" and failed:
+
+        def retry() -> None:
             _retry_failed(cfg, restart)
             time.sleep(1)
-        elif choice == "0":
+
+        actions = [
+            ("Open the gameplay folder", lambda: ui.open_folder(cfg.paths.gameplay)),
+            ("Open the clips folder", lambda: ui.open_folder(cfg.paths.clips)),
+            ("Open the reels folder", lambda: ui.open_folder(cfg.paths.output)),
+            ("Add a video link (YouTube, TikTok, Instagram...)", lambda: add_video_link(cfg)),
+            ("Watch live activity", lambda: _watch_log(cfg)),
+            ("Connect accounts / auto-posting", accounts),
+            ("AI helper (Claude): " + ("connected" if ai_on else "connect"), ai),
+            ("Settings (run the setup again)", settings),
+            ("Stop the bot" if running else "Start the bot", toggle),
+        ]
+        if failed:
+            actions.append((f"Try the {failed} failed clip(s) again", retry))
+        for number, (text, _) in enumerate(actions, 1):
+            ui.say(f"  {ui.yellow(str(number))}) {text}")
+        quit_text = "Quit (stops the bot)" if in_window.running else "Close this window (the bot keeps running)" if running else "Close"
+        ui.say(f"  {ui.yellow('0')}) {quit_text}")
+        choice = ui.ask("\nChoose", "")
+        if choice == "0":
             if in_window.running:
                 ui.say("Stopping the bot...")
                 in_window.stop()
             return 0
+        if choice.isdigit() and 1 <= int(choice) <= len(actions):
+            actions[int(choice) - 1][1]()

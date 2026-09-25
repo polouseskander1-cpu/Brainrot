@@ -85,6 +85,7 @@ DEFAULTS: dict[str, Any] = {
         "highlight_color": "",
         "keyword_color": "#39FF6A",
         "save_srt": True,
+        "translate_to": [],
     },
     "edit": {
         "cut_silences": True,
@@ -103,6 +104,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "hook": {
         "enabled": True,
+        "auto": True,
         "duration": 4,
         "font": "Montserrat Black",
         "font_size": 60,
@@ -123,6 +125,30 @@ DEFAULTS: dict[str, Any] = {
     "parts": {
         "max_seconds": 0,
     },
+    "moments": {
+        "enabled": True,
+        "min_source_minutes": 5,
+        "count": 0,
+        "max_count": 12,
+        "min_seconds": 20,
+        "max_seconds": 60,
+    },
+    "links": {
+        "enabled": True,
+        "max_height": 1080,
+        "playlist_limit": 5,
+        "cookies_file": "",
+    },
+    "ai": {
+        "enabled": True,
+        "model": "claude-opus-5",
+        "moments": True,
+        "copy": True,
+    },
+    "dedupe": {
+        "enabled": True,
+        "similarity": 0.7,
+    },
     "app": {
         "run_mode": "background",
         "autostart": False,
@@ -136,6 +162,7 @@ DEFAULTS: dict[str, Any] = {
         "facebook": False,
         "hours_between_posts": 3,
         "hashtags": "#fyp #viral #podcast",
+        "post_translations": False,
         "youtube_privacy": "public",
         "youtube_category": 24,
         "tiktok_mode": "draft",
@@ -274,9 +301,22 @@ def _validate(c: dict) -> None:
     e["censor_words"] = [str(w).strip().lower() for w in e["censor_words"] if str(w).strip()]
     e["censor_mode"] = _choice("edit.censor_mode", e["censor_mode"], ("bleep", "mute"))
     cap["save_srt"] = bool(cap["save_srt"])
+    if isinstance(cap["translate_to"], str):
+        cap["translate_to"] = cap["translate_to"].replace(",", " ").split()
+    if not isinstance(cap["translate_to"], list):
+        raise ConfigError("'captions.translate_to' must be a list of language codes, e.g. [es, ar]")
+    languages = []
+    for code in cap["translate_to"]:
+        code = str(code).strip().lower().replace("_", "-")
+        if not re.fullmatch(r"[a-z]{2,3}(-[a-z0-9]+)?", code):
+            raise ConfigError(f"'captions.translate_to' has {code!r}; use language codes like es, ar, fr, pt-br")
+        if code not in languages:
+            languages.append(code)
+    cap["translate_to"] = languages
 
     h = c["hook"]
     h["enabled"] = bool(h["enabled"])
+    h["auto"] = bool(h["auto"])
     h["duration"] = _num("hook.duration", h["duration"], 0, 36000)
     h["font"] = str(h["font"]).strip()
     h["font_size"] = _num("hook.font_size", h["font_size"], 10, 400, integer=True)
@@ -299,6 +339,33 @@ def _validate(c: dict) -> None:
     if 0 < parts["max_seconds"] < 10:
         raise ConfigError("'parts.max_seconds' must be 0 (off) or at least 10")
 
+    m = c["moments"]
+    m["enabled"] = bool(m["enabled"])
+    m["min_source_minutes"] = _num("moments.min_source_minutes", m["min_source_minutes"], 1, 1440)
+    m["count"] = _num("moments.count", m["count"] or 0, 0, 50, integer=True)
+    m["max_count"] = _num("moments.max_count", m["max_count"], 1, 50, integer=True)
+    m["min_seconds"] = _num("moments.min_seconds", m["min_seconds"], 5, 600)
+    m["max_seconds"] = _num("moments.max_seconds", m["max_seconds"], 10, 900)
+    if m["max_seconds"] < m["min_seconds"] + 5:
+        raise ConfigError("'moments.max_seconds' must be at least 5 more than 'moments.min_seconds'")
+
+    lk = c["links"]
+    lk["enabled"] = bool(lk["enabled"])
+    lk["max_height"] = _num("links.max_height", lk["max_height"], 144, 4320, integer=True)
+    lk["playlist_limit"] = _num("links.playlist_limit", lk["playlist_limit"], 1, 500, integer=True)
+    lk["cookies_file"] = str(lk["cookies_file"] or "").strip()
+
+    ai = c["ai"]
+    for key in ("enabled", "moments", "copy"):
+        ai[key] = bool(ai[key])
+    ai["model"] = str(ai["model"] or "").strip()
+    if not ai["model"]:
+        raise ConfigError("'ai.model' can't be empty (default: claude-opus-5)")
+
+    d = c["dedupe"]
+    d["enabled"] = bool(d["enabled"])
+    d["similarity"] = _num("dedupe.similarity", d["similarity"], 0.3, 1.0)
+
     t = c["tools"]
     t["ffmpeg"] = str(t["ffmpeg"] or "").strip()
     t["ffprobe"] = str(t["ffprobe"] or "").strip()
@@ -314,6 +381,7 @@ def _validate(c: dict) -> None:
         up[platform] = bool(up[platform])
     up["hours_between_posts"] = _num("upload.hours_between_posts", up["hours_between_posts"], 0, 168)
     up["hashtags"] = str(up["hashtags"] or "").strip()
+    up["post_translations"] = bool(up["post_translations"])
     up["youtube_privacy"] = _choice("upload.youtube_privacy", up["youtube_privacy"], ("public", "unlisted", "private"))
     up["youtube_category"] = _num("upload.youtube_category", up["youtube_category"], 1, 100, integer=True)
     up["tiktok_mode"] = _choice("upload.tiktok_mode", up["tiktok_mode"], ("draft", "direct"))

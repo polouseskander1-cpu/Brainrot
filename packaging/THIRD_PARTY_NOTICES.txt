@@ -19,7 +19,12 @@ Noto Emoji pictures (_internal/assets/emoji)
 Ultra-Light-Fast-Generic-Face-Detector-1MB (_internal/assets/models/ultraface-rfb-320.onnx)
   Copyright (c) 2019 linzai. MIT License (_internal/assets/models/LICENSE-ultraface.txt).
 
+Deno (deno/deno.exe) - runs YouTube's JavaScript for yt-dlp
+  Copyright the Deno authors. MIT License. https://github.com/denoland/deno
+
 Python and its standard library - Python Software Foundation License
+yt-dlp - The Unlicense (public domain); yt-dlp-ejs - Unlicense, MIT and ISC licenses
+Anthropic Python SDK - MIT License; httpx2 - BSD License; pydantic - MIT License; anyio - MIT License
 faster-whisper - MIT License (SYSTRAN)
 CTranslate2 - MIT License (OpenNMT)
 PyAV - BSD License

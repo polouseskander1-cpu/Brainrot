@@ -59,6 +59,7 @@ captions:
   highlight_color: ""   # e.g. "#00FF66" to color the word being spoken right now. Empty = off.
   keyword_color: "#39FF6A"  # important words (money, numbers, "never", "secret"...) in this color. Empty = off.
   save_srt: true        # also save a normal .srt subtitle file next to each reel (for YouTube uploads)
+  translate_to: []      # e.g. [es, ar]: also make each reel with captions in these languages (needs the AI key)
 
 edit:
   cut_silences: true    # remove pauses: silences longer than max_pause are cut (laughter and reactions are kept)
@@ -79,6 +80,7 @@ hook:
   # A title box at the start of the reel. Text comes from a .txt file with the same name as the clip
   # (my_clip.mp4 -> my_clip.txt), or title.txt in the clip's folder for all clips in that folder.
   enabled: true
+  auto: true            # no title file? Write a hook from what is said (with AI when connected)
   duration: 4           # seconds on screen (0 = the whole video)
   font: Montserrat Black
   font_size: 60
@@ -98,6 +100,36 @@ audio:
 
 parts:
   max_seconds: 0        # 0 = off. e.g. 90: longer clips are cut at pauses into Part 1/2/3 reels of at most 90s
+
+moments:
+  # Long videos (whole podcast episodes): instead of using everything, the bot finds the best moments
+  # and makes a reel of each one (with AI when connected, otherwise with built-in rules).
+  enabled: true
+  min_source_minutes: 5 # videos at least this long are treated as long videos
+  count: 0              # reels per long video (0 = automatic: about one per 8 minutes)
+  max_count: 12
+  min_seconds: 20       # length of each moment
+  max_seconds: 60
+
+links:
+  # Put video links (YouTube, TikTok, Instagram, X...) in a links.txt file inside a clips folder, one per line,
+  # or add them from the menu. Each video is downloaded into that folder and becomes reels like any clip.
+  enabled: true
+  max_height: 1080      # download quality
+  playlist_limit: 5     # a playlist or channel link downloads at most this many videos
+  cookies_file: ''      # for videos that need a login: browser cookies saved as cookies.txt (next to this file by default)
+
+ai:
+  # Claude (Anthropic API) picks the best moments, writes hooks, titles, captions and hashtags, and translates.
+  # Connect a key in the menu (AI). Without a key everything still works with the built-in rules.
+  enabled: true
+  model: claude-opus-5
+  moments: true         # let the AI pick the moments of long videos
+  copy: true            # let the AI write hooks, titles, captions and hashtags
+
+dedupe:
+  enabled: true         # skip videos that were already turned into reels (renamed copies, re-downloads, re-uploads)
+  similarity: 0.7       # how alike two transcripts must be to count as the same video (0.3-1)
 
 tools:
   # Only needed if ffmpeg isn't found automatically. Use single quotes, e.g. 'C:\ffmpeg\bin\ffmpeg.exe'
@@ -119,6 +151,7 @@ upload:
   facebook: false       # Facebook Page Reels (3-90 second reels only)
   hours_between_posts: 3   # space out posts on each platform (0 = post as soon as a reel is ready)
   hashtags: "#fyp #viral #podcast"   # added to every post. A hashtags.txt in a clip folder adds more.
+  post_translations: false  # also post the translated reels (captions.translate_to)
   youtube_privacy: public  # public, unlisted or private. Until your Google project passes YouTube's audit, uploads are locked private.
   youtube_category: 24     # 24 = Entertainment, 27 = Education, 22 = People & Blogs
   tiktok_mode: draft       # draft = lands in your TikTok inbox, you tap Post (works for every app);

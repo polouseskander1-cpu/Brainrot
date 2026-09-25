@@ -24,6 +24,8 @@ class State:
             "uploads": {},
             "upload_blocked": {},
             "last_post": {},
+            "links": {},
+            "fingerprints": [],
         }
         if path.exists():
             try:

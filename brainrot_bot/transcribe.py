@@ -26,11 +26,16 @@ class Word:
 
 
 def tidy_words(words: list[Word], min_len: float = 0.05) -> list[Word]:
-    """Sort words and make their timings sane (no negative, zero-length or backwards words)."""
+    """Sort words and make their timings sane (no negative, zero-length or backwards words).
+    A lone '%' (the speech model sometimes writes "90 %") is joined to the number before it."""
     cleaned: list[Word] = []
     for w in sorted(words, key=lambda w: w.start):
         text = w.text.strip()
         if not text:
+            continue
+        if text in ("%", "%.", "%,", "%?", "%!") and cleaned and w.start - cleaned[-1].end < 0.6:
+            cleaned[-1].text += text
+            cleaned[-1].end = max(cleaned[-1].end, w.end)
             continue
         start = max(0.0, w.start)
         if cleaned and start < cleaned[-1].start:
@@ -51,6 +56,7 @@ class Transcriber:
         self.device = device
         self.models_dir = models_dir
         self._model = None
+        self.last_language: str | None = None  # language heard in the last clip
 
     def _create(self, device: str):
         try:
@@ -102,11 +108,17 @@ class Transcriber:
             beam_size=5,
         )
         words: list[Word] = []
+        total = float(getattr(info, "duration", 0) or 0)
+        next_report = 600.0
         for segment in segments:  # the actual work happens while iterating
             if should_stop is not None and should_stop():
                 raise StopRequested()
             for w in segment.words or []:
                 if w.word and w.word.strip():
                     words.append(Word(w.word.strip(), float(w.start), float(w.end)))
-        log.info("Heard %d words (language: %s)", len(words), getattr(info, "language", "?"))
+            if total > 1200 and segment.end >= next_report:  # long videos: show progress every 10 minutes
+                log.info("  listened to %d of %d minutes", segment.end // 60, total // 60)
+                next_report += 600
+        self.last_language = getattr(info, "language", None)
+        log.info("Heard %d words (language: %s)", len(words), self.last_language or "?")
         return tidy_words(words)
