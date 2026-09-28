@@ -1,7 +1,9 @@
 **Download `BrainrotBot-windows.zip`**, unzip it, and double-click `BrainrotBot.exe`.
 Windows may warn that the app isn't signed: click "More info" > "Run anyway".
-Already using Brainrot Bot? The app offers this version in its menu (Update); your settings, logins,
-clips and reels stay.
+
+**Coming from 1.1?** Stop the bot (menu > Stop the bot), then unzip this download into the same place
+as before and choose to replace the files. Your settings, logins, clips and reels stay. From 1.2 on,
+new versions are offered in the app's menu, so this is the last manual update.
 
 ## What's new in 1.2
 
