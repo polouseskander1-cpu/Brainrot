@@ -142,6 +142,18 @@ phone:
   notify_errors: true   # a message when something needs you (a clip failed, a login ran out)
   link_folder: From phone  # Discord links without a folder name go here
 
+dashboard:
+  # A web page for your phone: what's waiting, approve, add links, stats. Menu > Phone dashboard shows its QR code.
+  enabled: true
+  port: 8770
+  lan: true             # true = phones on the same Wi-Fi can open it (with the secret link), false = this computer only
+
+cloud:
+  # Servers without the Google Drive / Dropbox apps: sync the folders through rclone (rclone.org).
+  # e.g. remote: "gdrive:Brainrot" copies gdrive:Brainrot/Clips and /Gameplay down and the reels up to /Reels.
+  remote: ''
+  every_minutes: 5
+
 tools:
   # Only needed if ffmpeg isn't found automatically. Use single quotes, e.g. 'C:\ffmpeg\bin\ffmpeg.exe'
   ffmpeg: ''
@@ -152,6 +164,8 @@ app:
   run_mode: background  # background = keeps working 24/7 after you close the window, window = stops when it closes
   autostart: false      # start by itself when you log in to the computer
   autostart_delay: 15   # seconds to wait after login before starting
+  tray: true            # icon next to the clock while it runs in the background (Windows)
+  auto_update: ask      # ask = offer new versions in the menu, auto = install them by itself, off = never check
   setup_done: false
 
 upload:

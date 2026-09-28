@@ -30,7 +30,6 @@ from typing import Callable
 from urllib.parse import quote
 
 from .media import Tools, popen_kwargs
-from .report import stats_lines
 from .uploads import http
 from .uploads.http import UploadError
 

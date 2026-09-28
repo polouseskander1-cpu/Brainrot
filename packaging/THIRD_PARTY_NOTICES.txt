@@ -32,6 +32,11 @@ ONNX Runtime - MIT License (Microsoft)
 tokenizers, huggingface_hub - Apache License 2.0 (Hugging Face)
 NumPy - BSD License
 PyYAML - MIT License
+segno (QR codes for the phone dashboard) - BSD 3-Clause License
+pystray (the icon next to the clock) - GNU Lesser General Public License v3 (LGPLv3).
+  Source code: https://github.com/moses-palmer/pystray. It is included unmodified as Python files
+  inside _internal and can be replaced with another version of the same library.
+Pillow - MIT-CMU (HPND) License; six - MIT License
 tqdm - MPL-2.0 / MIT License
 
 The Whisper speech-recognition models are downloaded on first use (not included); they are

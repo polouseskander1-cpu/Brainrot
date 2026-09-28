@@ -3,7 +3,6 @@
 import json
 import re
 import subprocess
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -218,10 +217,11 @@ def test_phone_outbox_problems_and_commands(tmp_path, files):
     phone.problem("YouTube login expired", "relogin:youtube")  # not twice in a row
     phone._send_waiting()
     (reel, ref, text, got_preview, got_cover, waiting, has_targets), problem = fake.sent
-    assert phone.video_for(ref) == "/reels/c.mp4" and got_preview is None and got_cover == cover
+    reel_path = str(Path("/reels/c.mp4"))  # backslashes on Windows
+    assert phone.video_for(ref) == reel_path and got_preview is None and got_cover == cover
     assert "Big title" in text and "Podcast A - 31s" in text and "Post on: YouTube Shorts" in text and waiting
     assert problem == ("text", "⚠️ YouTube login expired")
-    assert json.loads((tmp_path / "phone_state.json").read_text())["refs"][ref] == "/reels/c.mp4"  # survives restarts
+    assert json.loads((tmp_path / "phone_state.json").read_text())["refs"][ref] == reel_path  # survives restarts
 
     assert phone.command("/pause") and phone.actions.get_nowait() == Action("pause")
     assert phone.command("Stats@my_bot") == "No stats yet."

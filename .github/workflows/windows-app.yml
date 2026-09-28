@@ -1,6 +1,7 @@
 name: Windows app
 
-# Builds BrainrotBot.exe (with ffmpeg included) and tests the finished app on Windows.
+# Tests everything on Linux, builds and tests the server (Docker) image, then builds BrainrotBot.exe
+# (with ffmpeg and Deno included) and tests the finished app on Windows.
 # When the default branch has a version (brainrot_bot/__init__.py) that has no release yet, or a tag
 # like v1.2.0 is pushed, BrainrotBot-windows.zip is published as a GitHub Release.
 on:
@@ -14,16 +15,65 @@ permissions:
   contents: write
 
 jobs:
+  tests-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg and Python packages
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest Pillow
+      - name: Run the tests on Linux
+        run: python -m pytest -q
+      - name: Self-test
+        run: python brainrot.py --selftest
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the server image
+        run: docker build -t brainrot-bot .
+      - name: Test the server image (setup, then a real render)
+        run: |
+          set -e
+          mkdir -p data
+          docker run --rm -v "$PWD/data:/data" brainrot-bot --selftest
+          # setup: 6 platforms, AI, phone (no), then the three folders (Enter = suggested)
+          printf 'n\nn\nn\nn\nn\nn\nn\nn\n\n\n\n' | docker run -i --rm -v "$PWD/data:/data" brainrot-bot --setup
+          # data belongs to this user, so the bot runs as this user: no sudo needed to change anything
+          sed -i 's/^  model: small /  model: tiny  /' data/config.yaml
+          mkdir -p "data/clips/Test Show"
+          docker run --rm -v "$PWD/data:/data" --entrypoint ffmpeg brainrot-bot -hide_banner -loglevel error \
+            -f lavfi -i "testsrc2=s=1280x720:r=30" -f lavfi -i "sine=f=300" -t 6 -c:v libx264 -preset ultrafast -c:a aac "/data/clips/Test Show/clip.mp4"
+          docker run --rm -v "$PWD/data:/data" --entrypoint ffmpeg brainrot-bot -hide_banner -loglevel error \
+            -f lavfi -i "testsrc=s=1920x1080:r=30" -t 30 -c:v libx264 -preset ultrafast /data/gameplay/run.mp4
+          docker run --rm -v "$PWD/data:/data" brainrot-bot --once
+          ls -la "data/output/Test Show"
+          test -f "data/output/Test Show/clip.mp4"
+          test "$(stat -c %u "data/output/Test Show/clip.mp4")" = "$(id -u)"
+          test -z "$(find data -user root)"
+          docker run --rm -v "$PWD/data:/data" -e BRAINROT_PUBLIC_URL=http://192.168.1.50:8770 brainrot-bot --dashboard | tail -1 | grep -q "192.168.1.50:8770/?key="
+          echo "SERVER IMAGE TEST PASSED"
+
   build:
+    needs: [tests-linux, docker]
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -147,7 +197,7 @@ jobs:
       - name: Zip
         run: Compress-Archive -Path dist/BrainrotBot -DestinationPath BrainrotBot-windows.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: BrainrotBot-windows
           path: BrainrotBot-windows.zip
@@ -173,16 +223,10 @@ jobs:
 
       - name: Publish release
         if: steps.release.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Brainrot Bot ${{ steps.release.outputs.tag }}
           files: BrainrotBot-windows.zip
-          body: |
-            **Download `BrainrotBot-windows.zip`**, unzip it, and double-click `BrainrotBot.exe`.
-            Windows may warn that the app isn't signed: click "More info" > "Run anyway".
-
-            The first start shows the setup: run 24/7 in the background or only while the window is open,
-            start with Windows, connect TikTok / Instagram / Facebook / YouTube (or skip), and choose your
-            gameplay and clips folders. Guide: https://github.com/${{ github.repository }}/blob/HEAD/docs/PLATFORMS.md
+          body_path: packaging/RELEASE_NOTES.md

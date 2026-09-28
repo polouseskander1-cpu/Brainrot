@@ -19,6 +19,25 @@ def test_repo_config_loads_with_defaults():
     assert cfg.captions.color == "#FFD400" and cfg.captions.stroke_color == "#FFFFFF"
 
 
+def test_repo_config_explains_every_setting():
+    import yaml
+    from pathlib import Path
+
+    from brainrot_bot.config import DEFAULTS
+
+    def keys(data, prefix=""):
+        found = set()
+        for key, value in data.items():
+            if isinstance(value, dict) and key != "templates":
+                found |= keys(value, f"{prefix}{key}.")
+            else:
+                found.add(prefix + key)
+        return found
+
+    shipped = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text(encoding="utf-8"))
+    assert keys(shipped) == keys(DEFAULTS)  # the file users edit lists every setting there is
+
+
 def test_overrides_and_relative_folders(tmp_path):
     cfg = load_config(write(tmp_path, "folders:\n  clips: my clips\ncaptions:\n  max_words: 1\n  color: 00ff00\nvideo:\n  width: 721\n"))
     assert cfg.paths.clips == (tmp_path / "my clips").resolve()

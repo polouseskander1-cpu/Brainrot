@@ -8,24 +8,32 @@ BRAINROT BOT - quick start (Windows)
    Windows may say "Windows protected your PC" because the app isn't signed:
    click "More info" and then "Run anyway".
 
-3. Answer the setup questions:
+3. Answer the setup questions (anything optional can be skipped and added later):
    - run 24/7 in the background, or only while the window is open
    - start automatically when you log in (about 15 seconds after login)
-   - connect YouTube / TikTok / Instagram / Facebook for auto-posting, or skip them
-   - choose your folders
+   - auto-posting: TikTok, Instagram, Facebook, YouTube, X and Pinterest (connect or skip each one)
+   - AI helper: an Anthropic API key lets Claude pick the best moments and write hooks and captions
+   - your phone: Telegram or Discord, to approve each reel with one tap
+   - your folders (it offers Google Drive / Dropbox / OneDrive folders if you have them)
 
 4. At the end the app shows two folders:
    - GAMEPLAY: paste your gameplay recordings there
    - CLIPS: make one subfolder per podcast / influencer / topic and paste the clips inside
-   Every clip becomes a reel in the REELS folder.
+   Every clip becomes a reel in the REELS folder. Long videos (whole episodes) are cut into
+   their best moments. You can also add a YouTube / TikTok link from the menu or from your phone.
 
-Double-click BrainrotBot.exe again at any time to see what the bot is doing, open the folders,
-connect accounts, change settings or stop the bot.
+Double-click BrainrotBot.exe again at any time for the menu: what the bot is doing, the folders,
+add a video link, the phone dashboard (scan its QR code on the same Wi-Fi), stats, look & features,
+connect accounts, and start / stop. While it runs in the background, its icon sits next to the clock.
 
 The first clip takes a few extra minutes: the speech-recognition model (about 500 MB) is
 downloaded once into the "models" folder next to the app.
 
-Look & feel (caption colors, font size, words per caption, ...): open config.yaml next to
-BrainrotBot.exe with Notepad after the first start. Every setting is explained there.
+The app checks for new versions once a day and offers them in the menu. Updating keeps your
+settings, logins, clips and reels.
+
+Look & feel (caption colors, font size, words per caption, ...): menu > Look & features, or open
+config.yaml next to BrainrotBot.exe with Notepad after the first start. Every setting is explained there.
 
 Full guide and help: https://github.com/polouseskander1-cpu/Brainrot
+  Connecting each platform: docs/PLATFORMS.md    Phone: docs/PHONE.md

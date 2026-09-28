@@ -33,6 +33,7 @@ a = Analysis(
     hiddenimports=["brainrot_bot.app", "brainrot_bot.wizard", "brainrot_bot.selftest", "yt_dlp_ejs", "segno", "pystray._win32"]
     + collect_submodules("yt_dlp.extractor") + collect_submodules("anthropic.types"),
     excludes=["tkinter", "matplotlib", "IPython", "pytest", "cryptography", "OpenSSL"],
+    module_collection_mode={"pystray": "py"},  # LGPL: kept as plain .py files in _internal, so it can be swapped
     noarchive=False,
 )
 pyz = PYZ(a.pure)
