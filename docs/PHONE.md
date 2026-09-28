@@ -38,7 +38,7 @@ Without approval mode (below), reels are posted by themselves and the message on
 influencer) it belongs to, with a button for each folder and **➕ New folder**. The video is downloaded
 within a minute and becomes reels like any clip.
 
-**Commands** (also in the bot's menu button):
+**Commands** (most are also in the bot's menu button):
 
 | Command | What it does |
 |---|---|

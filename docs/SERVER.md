@@ -73,6 +73,9 @@ no browser of its own:
    shows an error page. That's expected: that address means "this computer", and the bot isn't there.
 3. Copy the **whole address** from the address bar and paste it into the setup.
 
+For YouTube, first copy the JSON file you download from Google into the `data` folder, then type its
+path as the container sees it, for example `/data/client_secret.json`, when the setup asks for it.
+
 Instagram and Facebook use pasted tokens anyway, so nothing changes for them. The setup steps for each
 platform are in [PLATFORMS.md](PLATFORMS.md). To connect accounts later, stop the bot, run the setup
 again, and start it:
