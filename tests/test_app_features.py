@@ -203,3 +203,63 @@ def test_tray_icon_picture():
     if not sys.platform.startswith("win"):
         cfg.app.tray = True
         assert start_tray(cfg, dashboard_url=str, open_app=int, open_folder=print, is_paused=bool, toggle_pause=int, stop=int) is None
+
+
+# ------------------------------------------------------------------ server (Docker)
+
+
+@pytest.mark.skipif(not hasattr(os, "setuid"), reason="Linux / Mac only")
+def test_server_runs_as_the_data_folder_owner(tmp_path, monkeypatch):
+    from brainrot_bot import service
+
+    data = tmp_path / "data"
+    (data / "clips").mkdir(parents=True)
+    (data / "rclone.conf").write_text("[gdrive]\n")
+    (data / "clips" / "mine.mp4").write_bytes(b"x")
+
+    class Owned(type(data)):  # the data folder belongs to uid 1000
+        def stat(self, *args, **kwargs):
+            return SimpleNamespace(st_uid=1000, st_gid=1000)
+
+    app = tmp_path / "app"  # the container's own files, left by an earlier run as root
+    (app / ".work" / "phone").mkdir(parents=True)
+    (app / ".bot.lock").write_text("")
+    monkeypatch.setattr(service, "LOCK_FILE", app / ".bot.lock")
+    monkeypatch.setattr(service, "PID_FILE", app / ".bot.pid")  # not there
+    monkeypatch.setattr(service, "STOP_FILE", app / ".stop")
+    monkeypatch.setattr(service, "WORK_DIR", app / ".work")
+
+    real_lstat = os.lstat
+    owners = {str(data / "rclone.conf"): 0, str(data / "clips"): 0, str(app / ".bot.lock"): 0, str(app / ".work" / "phone"): 0}
+
+    def lstat(path):
+        real = real_lstat(path)
+        return SimpleNamespace(st_mode=real.st_mode, st_uid=owners.get(str(path), 1000)) if str(path).startswith(str(tmp_path)) else real
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    calls = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid, follow_symlinks=True: calls.append(("chown", Path(path).name, uid, follow_symlinks)))
+    for name in ("setuid", "setgid", "setgroups"):
+        monkeypatch.setattr(os, name, lambda value, name=name: calls.append((name, value)))
+    monkeypatch.setattr(service.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setenv("HOME", "/root")
+
+    assert service.run_as_data_owner(Owned(data), fix_files=True)
+    given = sorted(c[1] for c in calls if c[0] == "chown" and c[1] != "brainrot-home")
+    assert given == [".bot.lock", "clips", "phone", "rclone.conf"] and all(c[2:] == (1000, False) for c in calls if c[0] == "chown" and c[1] != "brainrot-home")
+    assert calls[-3:] == [("setgroups", []), ("setgid", 1000), ("setuid", 1000)]  # the user id last
+    assert os.environ["HOME"] == str(tmp_path / "brainrot-home")
+
+    calls.clear()
+    assert service.run_as_data_owner(Owned(data))  # other commands only fix the bot's own files, not the whole data folder
+    assert sorted(c[1] for c in calls if c[0] == "chown" and c[1] != "brainrot-home") == [".bot.lock", "phone"]
+
+    class RootOwned(type(data)):  # docker made the folder: stay root
+        def stat(self, *args, **kwargs):
+            return SimpleNamespace(st_uid=0, st_gid=0)
+
+    calls.clear()
+    assert not service.run_as_data_owner(RootOwned(data), fix_files=True) and calls == []
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)  # not root: nothing to do
+    assert not service.run_as_data_owner(Owned(data), fix_files=True) and calls == []

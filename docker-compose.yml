@@ -1,5 +1,8 @@
-# Brainrot Bot on a server. First time:  docker compose run --rm brainrot --setup
-# Then:                                   docker compose up -d
+# Brainrot Bot on a server (guide: docs/SERVER.md). First time:
+#   mkdir data                               (made by you, so the bot's files are yours too)
+#   docker compose run --rm brainrot --setup
+# Then:
+#   docker compose up -d
 services:
   brainrot:
     build: .
@@ -8,7 +11,7 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ./data:/data          # config.yaml, logins, Clips, Gameplay, Reels... all live here
+      - ./data:/data          # settings, logins, clips, gameplay, reels (output), speech model: all in ./data
     ports:
       - "8770:8770"           # the phone dashboard (only on a home network, or put it behind HTTPS)
     environment:

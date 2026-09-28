@@ -25,7 +25,7 @@ from pathlib import Path
 
 from . import __version__, service
 from .bot import Bot
-from .config import FONTS_DIR, SERVER, STOP_FILE, WORK_DIR, ConfigError, ensure_config_file, load_config
+from .config import DEFAULT_CONFIG_PATH, FONTS_DIR, SERVER, STOP_FILE, WORK_DIR, ConfigError, ensure_config_file, load_config
 from .gameplay import list_media
 from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 
@@ -216,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    if SERVER:  # Docker: act as the owner of the data folder rather than root
+        service.run_as_data_owner((args.config or DEFAULT_CONFIG_PATH).resolve().parent, fix_files=args.run or args.once)
     try:
         ensure_config_file()
         if args.config:

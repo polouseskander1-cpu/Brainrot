@@ -1,4 +1,4 @@
-# Brainrot Bot on a server (Linux, Raspberry Pi 4/5, NAS...): see server/README.md
+# Brainrot Bot on a server (Linux, Raspberry Pi 4/5, NAS...): see docs/SERVER.md
 FROM denoland/deno:bin-2.9.7 AS deno
 
 FROM python:3.12-slim
@@ -16,10 +16,14 @@ COPY brainrot.py config.yaml ./
 COPY brainrot_bot ./brainrot_bot
 COPY fonts ./fonts
 COPY assets ./assets
+# The bot runs as the owner of the data folder when that isn't root (see docs/SERVER.md): let it keep
+# its lock and work files here, and compile the code now since it can't write here later.
+RUN python -m compileall -q brainrot_bot && mkdir -p .work && chmod 1777 /app /app/.work
 
 # Everything you keep (settings, logins, clips, gameplay, reels, the speech model) lives in /data.
 ENV BRAINROT_SERVER=1 \
     BRAINROT_MODELS_DIR=/data/models \
+    RCLONE_CONFIG=/data/rclone.conf \
     PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8770

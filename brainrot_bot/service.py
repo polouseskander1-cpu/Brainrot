@@ -8,10 +8,11 @@ import plistlib
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-from .config import APP_DIR, DEFAULT_CONFIG_PATH, FROZEN, LOCK_FILE, PID_FILE, STOP_FILE
+from .config import APP_DIR, DEFAULT_CONFIG_PATH, FROZEN, LOCK_FILE, PID_FILE, STOP_FILE, WORK_DIR
 
 log = logging.getLogger("brainrot")
 
@@ -302,3 +303,51 @@ def set_autostart(enabled: bool, config: Path | None = None) -> None:
             )
         else:
             LINUX_AUTOSTART.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------- servers (Docker)
+
+
+def run_as_data_owner(folder: Path, fix_files: bool = False) -> bool:
+    """Docker starts the bot as root. When the data folder belongs to you (mkdir data before the setup),
+    the bot switches to your user, so the settings, folders and reels it makes are yours: no sudo needed
+    to add, edit or delete them. fix_files: files that root made in there (e.g. rclone's login) are
+    handed to you too. Returns True if it switched."""
+    if not hasattr(os, "setuid") or os.geteuid() != 0:
+        return False
+    try:
+        owner = folder.stat()
+    except OSError:
+        return False
+    uid, gid = owner.st_uid, owner.st_gid
+    if uid == 0:
+        return False  # made by Docker itself: keep running as root, like before
+    # The bot's own files from an earlier run as root in this container (docker compose restart).
+    for path in [LOCK_FILE, PID_FILE, STOP_FILE, WORK_DIR] + ([folder] if fix_files else []):
+        _give_root_files(Path(path), uid, gid)
+    home = Path(tempfile.gettempdir()) / "brainrot-home"  # caches of ffmpeg's fonts, Deno and yt-dlp
+    try:
+        home.mkdir(exist_ok=True)
+        os.chown(home, uid, gid)
+        os.environ["HOME"] = str(home)
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+    except OSError as exc:
+        log.warning("Couldn't switch to the data folder's owner (%s); running as root.", exc)
+        return False
+    return True
+
+
+def _give_root_files(path: Path, uid: int, gid: int) -> None:
+    """chown whatever belongs to root in path (a file, or a folder and everything in it) to uid:gid."""
+    paths = [str(path)]
+    if path.is_dir() and not path.is_symlink():
+        for root, dirs, files in os.walk(path):
+            paths += [os.path.join(root, name) for name in dirs + files]
+    for item in paths:
+        try:
+            if os.lstat(item).st_uid == 0:
+                os.chown(item, uid, gid, follow_symlinks=False)
+        except OSError:
+            pass

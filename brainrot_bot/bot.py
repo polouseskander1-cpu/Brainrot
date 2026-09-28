@@ -20,7 +20,7 @@ from .ai import AI
 from .analysis import Loudness
 from .cloud import CloudSync
 from .captions import Hook, build_ass, build_srt, group_words, prepare_words, time_groups
-from .config import APP_DIR, FONTS_DIR, MODELS_DIR, STOP_FILE, WORK_DIR
+from .config import APP_DIR, FONTS_DIR, MODELS_DIR, SERVER, STOP_FILE, WORK_DIR
 from .copywriter import merge_hashtags, write_copy
 from .credentials import Credentials
 from .dedupe import Fingerprints, frame_hashes, quick_hash, sound_bits, text_signature
@@ -224,7 +224,8 @@ class Bot:
         self._update_told = release.version
         if not updater.can_install() or self.cfg.app.auto_update == "ask":
             if first_time:
-                how = "open the app and pick Update" if updater.can_install() else "run: git pull"
+                how = ("open the app and pick Update" if updater.can_install()
+                       else "git pull, then docker compose up -d --build" if SERVER else "run: git pull")
                 log.info("Brainrot Bot %s is available (you have the older one): %s. %s", release.version, how, release.page)
                 if self.phone is not None:
                     self.phone.problem(f"Brainrot Bot {release.version} is available: {how}.", f"update:{release.version}")

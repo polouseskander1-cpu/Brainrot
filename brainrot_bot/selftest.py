@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 
 from . import __version__, service
-from .config import FROZEN, update_config_file
+from .config import FROZEN, SERVER, update_config_file
 from .credentials import Credentials
 from .media import find_tools
 
@@ -73,6 +73,8 @@ def _app_parts():
     assert newer("99.0.0") and "robocopy" in install_script(Path("n"), Path("a"), 1, ["x"])
     detail = []
     if os.name == "nt":
+        import pystray  # noqa: F401 - the tray library (kept as plain .py files in the app) loads
+
         from .tray import icon_image
 
         assert icon_image(32).size == (32, 32)
@@ -108,6 +110,8 @@ def _credentials():
 
 
 def _autostart():
+    if SERVER:
+        return "not used on a server (Docker starts the bot)"
     before = service.autostart_enabled()
     try:
         service.set_autostart(True)
