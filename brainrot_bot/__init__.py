@@ -5,4 +5,4 @@ vertical 9:16 video, fills the bottom with random gameplay that lasts exactly as
 long as the clip, and burns in word-by-word captions.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

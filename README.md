@@ -3,8 +3,9 @@
 Drop podcast or educational clips (or just paste a YouTube / TikTok link) and get back vertical
 reels: the clip on top, random gameplay underneath that lasts exactly as long as the clip, and big
 yellow word-by-word captions. It runs 24/7, finds the best moments of long episodes, edits them
-(cut pauses, zooms on the speaker, emojis, sound effects), writes the hook and caption, and can post
-to TikTok, Instagram, Facebook, YouTube, X and Pinterest, with a tap-to-approve on your phone.
+(cut pauses, zooms on the speaker, emojis, sound effects), writes the hook and caption, makes a version
+of every reel for each platform (1 minute or longer for TikTok, under a minute for YouTube Shorts...),
+and can post them to TikTok, Instagram, Facebook, YouTube, X and Pinterest, with a tap-to-approve on your phone.
 
 ```
 ┌────────────────────────┐
@@ -56,7 +57,9 @@ At the end it shows the two folders you need:
 
 - **Gameplay**: paste your gameplay recordings here (Minecraft, parkour, Subway Surfers...).
 - **Clips**: make **one subfolder per podcast / influencer / topic** and paste the clips inside.
-  Every video in those subfolders becomes a reel in the **Reels** folder, with the same subfolder name.
+  Every video in those subfolders becomes reels in the **Reels** folder, one version per platform:
+  `Reels\TikTok\<podcast>\`, `Reels\YouTube\<podcast>\`, `Reels\Instagram\<podcast>\` and
+  `Reels\Facebook\<podcast>\`.
 
 After that, double-clicking the app shows a small menu: what the bot is doing, what is waiting to be
 posted, and options to open the folders, add a video link, open the phone dashboard, see the stats,
@@ -73,10 +76,12 @@ is downloaded once. After that, a 1-minute clip takes about 1-2 minutes on a nor
   clip folder (one link per line). YouTube, TikTok, Instagram, X and more; the video is downloaded
   into that folder. A playlist or channel link takes the newest 5.
 - **Long videos** (whole podcast episodes, 5 minutes or longer): instead of one huge reel, the bot finds
-  the **best moments** (20-60 seconds each, about one per 8 minutes) and makes a reel of each. It looks
-  for a strong opening (a question, a bold claim, a number, the start of a story), a payoff at the
-  end, energy, and skips intros, ads and small talk. With the AI helper, Claude reads the whole
-  transcript and picks them.
+  the **best moments** and makes reels of each: about one per 20 minutes, so **6 from a 2-hour episode**
+  (set your own number in the menu under **Look & features**). Each moment is 1-1.5 minutes, long enough
+  for TikTok, and the YouTube version is the strongest part of it. The bot looks for hot takes and
+  controversial opinions, mind-blowing facts and sci-fi talk (space, aliens, AI, the future), stories,
+  strong openings (a question, a bold claim, a number) and a payoff at the end, and skips intros, ads
+  and small talk. With the AI helper, Claude reads the whole transcript and picks them.
 - **Duplicates are skipped**: the same video renamed, copied, re-downloaded or re-encoded (same sound
   or same words) is noticed and not made or posted twice.
 
@@ -102,7 +107,18 @@ Change any of this in the menu under **Look & features**, or in `config.yaml`.
 ## Posting
 
 Every finished reel goes to each connected account, spaced out and at good times of day, then its
-views and likes are checked a few times so you can see what works.
+views and likes are checked a few times so you can see what works. **Each platform gets its own
+version**, cut to what it takes and pays for:
+
+| Version | Length | Why |
+|---|---|---|
+| TikTok | 61-90 s | TikTok's Creator Rewards only pay for videos of 1 minute or longer |
+| YouTube Shorts | up to 59 s | A Short over 1 minute with a copyright claim can't earn |
+| Instagram, Facebook | up to 90 s | Facebook takes reels of 3-90 s from apps; Instagram gets the same version |
+
+The right length is only part of getting paid: each program also has follower and view thresholds, and
+all of them require original content, which reposted clips of other people's podcasts often don't
+count as. → [What each platform requires](docs/PLATFORMS.md#getting-paid-what-each-platform-requires)
 
 | Platform | What you get |
 |---|---|
@@ -163,6 +179,8 @@ choose *Stop the bot* then *Start the bot*. Some useful ones:
 | `edit.cut_silences` / `zoom` / `emojis` / `sfx` | on | The editing features. |
 | `edit.censor` | off | Hide swear words (`censor_mode: bleep` or `mute`). |
 | `moments.min_source_minutes` | `5` | Videos at least this long are cut into their best moments. |
+| `moments.count` | `0` | Reels per long video. `0` = about one per 20 minutes (6 from 2 hours). |
+| `versions.tiktok` / `youtube` / ... | `61-90` / `3-59` / ... | Length of each platform's version, in seconds. `versions.enabled: false` = one version in `Reels\<podcast>\`. |
 | `upload.post_times` | `auto` | `["12:00", "18:30"]` = only then, `[]` = any time. |
 | `upload.hours_between_posts` | `3` | At least this long between posts on the same account. |
 | `phone.approval` | off | Reels wait for your OK on the phone. |

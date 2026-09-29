@@ -1,37 +1,34 @@
 **Download `BrainrotBot-windows.zip`**, unzip it, and double-click `BrainrotBot.exe`.
 Windows may warn that the app isn't signed: click "More info" > "Run anyway".
 
-**Coming from 1.1?** Stop the bot (menu > Stop the bot), then unzip this download into the same place
-as before and choose to replace the files. Your settings, logins, clips and reels stay. From 1.2 on,
-new versions are offered in the app's menu, so this is the last manual update.
+**Already on 1.2?** Open the app and choose **Update** in the menu. **Coming from 1.1?** Stop the bot
+(menu > Stop the bot), then unzip this download into the same place as before and choose to replace the
+files. Either way, your settings, logins, clips and reels stay.
 
-## What's new in 1.2
+## What's new in 1.3
 
-**Getting videos**
-- Long videos (whole episodes) are cut into their best moments, one reel each.
-- Video links: add a YouTube / TikTok / Instagram / X link from the menu, your phone, or a `links.txt`.
-- Duplicate protection: the same video renamed, re-downloaded or re-encoded isn't made or posted twice.
-- Optional AI helper (your own Anthropic API key): Claude picks the moments and writes the hook,
-  title, caption and hashtags, and translates captions.
+**A version of every reel for each platform**, each in its own folder and posted to its own platform:
 
-**Editing**
-- Pauses cut, zooms on the speaker's face, emojis, sound effects, key words highlighted.
-- Caption styles (classic, Hormozi, MrBeast, minimal, karaoke) and layouts (split, floating card,
-  full screen, side by side).
-- Swear words bleeped, music that gets quieter while someone talks, a cover picture for every reel,
-  translated captions.
+| Folder | Length | Why |
+|---|---|---|
+| `Reels\TikTok\` | 61-90 seconds | TikTok's Creator Rewards only pay for videos of 1 minute or longer |
+| `Reels\YouTube\` | up to 59 seconds | A Short over 1 minute with a copyright claim can't earn |
+| `Reels\Instagram\`, `Reels\Facebook\` | up to 90 seconds | Facebook takes reels of 3-90 seconds from apps |
 
-**Posting**
-- X and Pinterest, on top of TikTok, Instagram, Facebook and YouTube (Snapchat has no posting API).
-- Several accounts per platform, chosen per clip folder.
-- Posting at good times of day (learned from each account's views), text fitted to each platform.
-- Views and likes of every post, the best podcasts and gameplay (menu > Stats).
+Lengths are checked after pauses are cut. A clip under a minute gets no TikTok version (the log says
+why). Change the lengths or switch this off in `config.yaml` (`versions:`) or in the menu.
 
-**Your phone and the app**
-- Telegram or Discord: approve each reel with one tap, send links, get /stats.
-- Phone dashboard: scan a QR code to see and approve everything from your phone on the same Wi-Fi.
-- Icon next to the clock, updates from the menu, graphics card rendering, Google Drive / Dropbox /
-  OneDrive folders, and a Docker version for servers.
+**Long podcast episodes**
+- About one reel per 20 minutes: **6 from a 2-hour episode**. Pick your own number in the menu under
+  Look & features.
+- Each moment is 1-1.5 minutes (long enough for TikTok); the YouTube version is its strongest part.
+- The bot now looks for hot takes and controversial opinions, mind-blowing facts and sci-fi talk (space,
+  aliens, AI, the future), and so does the AI helper.
+- Listening (speech recognition) uses more of the processor on bigger PCs, so long episodes finish sooner.
+
+**Getting paid:** the right length is only part of it. See
+[what each platform requires](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md#getting-paid-what-each-platform-requires):
+follower and view thresholds, and originality rules that reposted clips often don't meet.
 
 Guides: [connecting the platforms](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md) ·
 [your phone](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PHONE.md) ·

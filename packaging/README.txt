@@ -19,8 +19,10 @@ BRAINROT BOT - quick start (Windows)
 4. At the end the app shows two folders:
    - GAMEPLAY: paste your gameplay recordings there
    - CLIPS: make one subfolder per podcast / influencer / topic and paste the clips inside
-   Every clip becomes a reel in the REELS folder. Long videos (whole episodes) are cut into
-   their best moments. You can also add a YouTube / TikTok link from the menu or from your phone.
+   Every clip becomes reels in the REELS folder, one version per platform: REELS\TikTok (1 minute
+   or longer), REELS\YouTube (under a minute), REELS\Instagram and REELS\Facebook (up to 90 s).
+   Long videos (whole episodes) are cut into their best moments: about 6 reels from a 2-hour episode.
+   You can also add a YouTube / TikTok link from the menu or from your phone.
 
 Double-click BrainrotBot.exe again at any time for the menu: what the bot is doing, the folders,
 add a video link, the phone dashboard (scan its QR code on the same Wi-Fi), stats, look & features,

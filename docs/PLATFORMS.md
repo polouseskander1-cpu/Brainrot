@@ -19,13 +19,53 @@ On a server without a browser, the logins work slightly differently: see
 
 | Platform | Works right away? | The catch |
 |---|---|---|
-| TikTok | Yes, as **drafts**: each reel lands in your TikTok inbox and you tap *Post* | Posting directly (no tap) needs TikTok to audit your app |
+| TikTok | Yes, as **drafts**: each reel lands in your TikTok inbox and you tap *Post* | Posting directly (no tap) needs TikTok to audit your app. Only reels of 1 minute or longer are made for TikTok |
 | Instagram Reels | Yes | Needs a Professional (Business or Creator) account. Max 100 posts a day |
 | Facebook Reels | Yes | Posts to a Facebook **Page**. Reels must be 3 to 90 seconds. Max 30 a day |
 | YouTube Shorts | Uploads work, but they are **locked as private** | Google must audit your project before uploads can be public |
 | X (Twitter) | Yes | Pay-per-use API: about $0.015 per post. Videos up to 140 seconds |
 | Pinterest | Yes, with **trial access** | Pinterest must approve your app (standard access) before pins go public |
 | Snapchat Spotlight | **No** | Snapchat has no public API for posting to Spotlight. Upload those from the Snapchat app |
+
+## A version for each platform
+
+Each platform gets its own version of every reel, cut to the length that platform takes and pays for,
+in its own folder: `Reels\TikTok\<podcast>\`, `Reels\YouTube\<podcast>\`, `Reels\Instagram\<podcast>\`,
+`Reels\Facebook\<podcast>\`. Upload from those folders yourself, or let the bot post each one to its platform.
+
+| Platform | Length (after pauses are cut) | Why |
+|---|---|---|
+| TikTok | 61-90 seconds | The Creator Rewards Program only pays for videos of **1 minute or longer** |
+| YouTube Shorts | up to 59 seconds | Shorts can run 3 minutes, but a Short over 1 minute with a copyright claim can't earn |
+| Instagram | up to 90 seconds (the long version when there is one) | Instagram shows reels up to 3 minutes to new viewers; the same version as Facebook keeps it simple |
+| Facebook | up to 90 seconds (the long version when there is one) | Facebook only takes reels of 3-90 seconds from apps |
+
+Usually that's two renders: a long version (TikTok, Instagram, Facebook) and a shorter one for YouTube,
+taken from the same moment, so the viral part is in both. A clip under a minute gets no TikTok version,
+because TikTok wouldn't pay for it; the log says so. Change the lengths, or switch this off, under
+`versions:` in `config.yaml`, or in the menu under **Look & features**.
+
+## Getting paid: what each platform requires
+
+The bot makes every version the right length and format, which is the part it can control. Whether a
+platform actually pays you also depends on your account, and on originality rules no editing tool can
+guarantee:
+
+| Platform | Program | You also need |
+|---|---|---|
+| TikTok | [Creator Rewards Program](https://www.tiktok.com/legal/page/global/tiktok-creator-rewards-program-eea/en) | 10,000 followers and 100,000 views in the last 30 days, 18+, a personal (not Business) account, a country where it runs. Each video needs 1,000 qualified views, and has to be original or "add new ideas to preexisting content" |
+| YouTube | [Partner Program, Shorts revenue](https://support.google.com/youtube/answer/12504220) | 1,000 subscribers and 10 million Shorts views in 90 days (or 4,000 watch hours). Reuploads of other creators' content and compilations without original content added can't earn |
+| Facebook | [Content Monetization](https://creators.facebook.com/introducing-facebook-content-monetization) | Facebook's eligibility (followers and minutes watched). Reposting other creators' content, even with captions, borders or speed changes added, counts as [unoriginal](https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/): less reach, and pages that mostly post it lose monetization |
+| Instagram | No pay-per-view program | Bonuses are invite-only; gifts and subscriptions need followers; Meta's originality rules apply here too |
+
+**About clips of other people's podcasts.** All three companies say that reposting someone else's
+video with light edits (captions, gameplay underneath, a new speed) isn't original content. Channels
+built only on that are the ones most often refused or demonetized, and a podcast whose owner uses
+YouTube's Content ID can claim your Short (the money then goes to them). What helps:
+
+- clip podcasts you own, or that allow clipping (many podcasters are happy to be clipped; ask);
+- add something of your own: your commentary or reaction, on screen or as a voice-over;
+- credit the source in the caption.
 
 ## When and what gets posted
 
@@ -88,8 +128,7 @@ then it never expires. If it does expire, connect Instagram again.
 ## Facebook Reels (Pages)
 
 Reels go to a Facebook **Page** you manage, not to a personal profile. Facebook only accepts reels
-of **3 to 90 seconds**. Longer reels are skipped for Facebook (turn on `parts.max_seconds: 90` to cut
-long clips into parts).
+of **3 to 90 seconds** from apps, so the Facebook version is never longer than 90 seconds.
 
 1. In [developers.facebook.com/apps](https://developers.facebook.com/apps), open your **Business** app
    (you can reuse the Instagram one). Under **App settings > Basic**, copy the **App ID** and **App secret**.
