@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(TOOLS is None or "ass" not in TOOLS.filters, rea
 # Pause cutting is switched off here so the reel is exactly as long as the clip; it has its own test below.
 BASE_CONFIG = (
     "watch:\n  settle_seconds: 0\n  max_attempts: 1\nvideo:\n  width: 360\n  height: 640\n  preset: ultrafast\n"
-    "captions:\n  font_size: 40\nedit:\n  cut_silences: false\n"
+    "versions:\n  enabled: false\ncaptions:\n  font_size: 40\nedit:\n  cut_silences: false\n"
 )
 
 
@@ -396,3 +396,58 @@ def test_command_line_check_and_single_clip(workspace, monkeypatch):
     assert cli.main(["--config", config, "--check"]) == 0
     assert cli.main(["--config", config, "--clip", str(workspace / "clips" / "show" / "ep1.mp4")]) == 0
     assert (workspace / "output" / "show" / "ep1.mp4").exists()
+
+
+def steady_talk(seconds):
+    """A sentence every ~4 seconds for the whole clip."""
+    words, t, n = [], 0.3, 0
+    while t < seconds - 4:
+        n += 1
+        for token in f"Here is point number {n} about money and success.".split():
+            words.append(Word(token, t, t + 0.3))
+            t += 0.35
+        t += 0.6
+    return words
+
+
+def test_every_platform_gets_its_own_version(workspace, monkeypatch):
+    """Versions on (the default): TikTok 1 minute or longer, YouTube Shorts under a minute, each posted to its own platform."""
+    from brainrot_bot.credentials import Credentials
+    from brainrot_bot.uploads import Posted
+    from brainrot_bot.uploads import queue as queue_module
+
+    (workspace / "clips" / "show" / "ep1.mp4").unlink()
+    make_clip(workspace / "clips" / "show" / "talk.mp4", 72)
+    posted = []
+
+    def fake(key):
+        class Fake:
+            KEY, NAME = key, key.title()
+
+            @staticmethod
+            def upload(video, post, cfg, store, should_stop, account=key):
+                posted.append((account, video.parent.parent.name, post.duration))
+                return Posted("ok")
+        return Fake
+
+    for key in ("tiktok", "youtube"):
+        monkeypatch.setitem(queue_module.PLATFORMS, key, fake(key))
+        Credentials(workspace / "credentials").set(key, {"token": "t"})
+    config = BASE_CONFIG.replace("versions:\n  enabled: false\n", "")
+    (workspace / "config.yaml").write_text(config + "upload:\n  tiktok: true\n  youtube: true\n  post_times: []\n"
+                                           "  hours_between_posts: 0\n", encoding="utf-8")
+    bot = new_bot(workspace, steady_talk(72))
+    assert bot.run_once() == 1
+    bot.uploads.run_due()
+    out = workspace / "output"
+    tiktok, youtube = out / "TikTok" / "show" / "talk.mp4", out / "YouTube" / "show" / "talk.mp4"
+    long_s, short_s = probe(TOOLS, tiktok).duration, probe(TOOLS, youtube).duration
+    assert 61 <= long_s <= 90 and 20 <= short_s <= 59
+    for name in ("Instagram", "Facebook"):  # the same long version, in their own folders
+        copy = out / name / "show" / "talk.mp4"
+        assert copy.read_bytes() == tiktok.read_bytes() and copy.with_suffix(".jpg").exists()
+    assert youtube.with_suffix(".jpg").exists() and youtube.with_suffix(".srt").exists()
+    assert sorted((a, folder) for a, folder, _ in posted) == [("tiktok", "TikTok"), ("youtube", "YouTube")]
+    seconds = {a: d for a, _, d in posted}
+    assert abs(seconds["tiktok"] - long_s) < 0.2 and abs(seconds["youtube"] - short_s) < 0.2
+    assert len(bot.state.clips["show/talk.mp4"]["outputs"]) == 4

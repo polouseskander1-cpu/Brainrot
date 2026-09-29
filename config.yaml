@@ -106,10 +106,22 @@ moments:
   # and makes a reel of each one (with AI when connected, otherwise with built-in rules).
   enabled: true
   min_source_minutes: 5 # videos at least this long are treated as long videos
-  count: 0              # reels per long video (0 = automatic: about one per 8 minutes)
+  count: 0              # reels per long video (0 = automatic: about one per 20 minutes, so 6 from a 2-hour episode)
   max_count: 12
-  min_seconds: 20       # length of each moment
+  min_seconds: 20       # length of each moment (with versions on, moments are made long enough for the TikTok one)
   max_seconds: 60
+
+versions:
+  # A version of every reel for each platform, fitted to what that platform accepts and pays for, saved in
+  # Reels/TikTok/<podcast>/, Reels/YouTube/<podcast>/ ... and posted to that platform. Lengths are in seconds,
+  # after pauses are cut. A platform gets nothing when no part of the reel fits (e.g. a 45 s clip for TikTok).
+  enabled: true
+  tiktok: 61-90         # TikTok's Creator Rewards only pay for videos of 1 minute or longer
+  youtube: 3-59         # YouTube Shorts: over 1 minute, a copyright claim blocks the Short from earning
+  instagram: 3-90       # Instagram shows reels up to 3 minutes to new viewers (the same version as Facebook)
+  facebook: 3-90        # Facebook takes reels of 3-90 seconds from apps
+  x: ''                 # '' = no version of its own: X and Pinterest get the longest one
+  pinterest: ''
 
 links:
   # Put video links (YouTube, TikTok, Instagram, X...) in a links.txt file inside a clips folder, one per line,

@@ -39,6 +39,21 @@ def chunk_score(chunk: Chunk, tmap: TimeMap, loudness: Loudness | None) -> float
     return score
 
 
+def kept_intervals(cfg: SimpleNamespace, fps: float, start: float, end: float, words: list[Word],
+                   loudness: Loudness | None = None) -> list[tuple[float, float]]:
+    """The parts of start-end that stay in the reel (pauses cut when edit.cut_silences is on)."""
+    in_range = [w for w in words if start <= w.start < end]
+    if cfg.edit.cut_silences and in_range:
+        return speech_intervals(in_range, start, end, max_pause=cfg.edit.max_pause, fps=fps, loudness=loudness)
+    return [(quantize(start, fps), quantize(end, fps))]
+
+
+def edited_length(cfg: SimpleNamespace, fps: float, start: float, end: float, words: list[Word],
+                  loudness: Loudness | None = None) -> float:
+    """How long the reel of start-end will be, once pauses are cut."""
+    return TimeMap(kept_intervals(cfg, fps, start, end, words, loudness)).duration
+
+
 def plan_edit(
     cfg: SimpleNamespace,
     layout: Layout,
@@ -50,10 +65,7 @@ def plan_edit(
 ) -> EditPlan:
     edit, fps = cfg.edit, layout.fps
     in_range = [w for w in words if start <= w.start < end]
-    if edit.cut_silences and in_range:
-        intervals = speech_intervals(in_range, start, end, max_pause=edit.max_pause, fps=fps, loudness=loudness)
-    else:
-        intervals = [(quantize(start, fps), quantize(end, fps))]
+    intervals = kept_intervals(cfg, fps, start, end, words, loudness)
     tmap = TimeMap(intervals)
     reel_words = tmap.map_words(in_range)
     style = apply_style(cfg.captions)

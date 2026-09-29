@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 from .analysis import WORD_TO_EMOJI, keyword_score, normalize
-from .moments import DANGLING, STORY, split_sentences
+from .moments import DANGLING, HOT_TAKE, STORY, WONDER, WONDER_WORDS, split_sentences
 from .transcribe import Word
 
 # Topic hashtags for words the bot recognizes (emoji code -> hashtag).
@@ -41,28 +41,63 @@ def clean_sentence(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def best_line(words: list[Word], max_words: int = 12) -> str:
-    """The sentence most likely to make people stop scrolling: short, a question or a bold claim."""
+def _first_clause(words: list[Word]) -> list[Word]:
+    """'Here is my unpopular opinion, and people get angry...' -> 'Here is my unpopular opinion,'"""
+    for i, w in enumerate(words):
+        if w.text.endswith((",", ";", ":", "—", "-")):
+            return words[: i + 1]
+    return []
+
+
+def best_line(words: list[Word], max_words: int = 14) -> str:
+    """The line most likely to make people stop scrolling: short, a question, a hot take or a bold claim.
+    A long sentence can lend its first clause ('Here is my unpopular opinion')."""
     sentences = split_sentences(words)
     best, best_score = "", 1.4
-    total = max((s.end for s in sentences), default=1.0)
+    if not sentences:
+        return best
+    begin = sentences[0].start
+    span = max(1.0, sentences[-1].end - begin)
     for s in sentences:
-        n = len(s.words)
-        if n < 3 or n > max_words:
-            continue
-        score = sum(keyword_score(w.text) for w in s.words)
-        if s.words[-1].text.endswith("?"):
-            score += 1.5
-        lowered = " " + s.text.lower() + " "
-        if any(phrase in lowered for phrase in STORY):
-            score += 1.0  # "the craziest thing that ever happened to me"
-        if s.start < total * 0.4:
-            score += 0.5
-        if normalize(s.words[0].text) in DANGLING:
-            score -= 1.0
-        if score > best_score:
-            best, best_score = clean_sentence(s.text), score
+        clause = _first_clause(s.words)
+        candidates = ([s.words] if len(s.words) <= max_words else []) + ([clause] if 4 <= len(clause) < len(s.words) else [])
+        for part in candidates:
+            if len(part) < 3 or len(part) > max_words:
+                continue
+            score = sum(keyword_score(w.text) for w in part)
+            if part[-1].text.endswith("?"):
+                score += 1.5
+            lowered = " " + " ".join(w.text for w in part).lower() + " "
+            if any(phrase in lowered for phrase in STORY):
+                score += 1.0  # "the craziest thing that ever happened to me"
+            if any(phrase in lowered for phrase in HOT_TAKE):
+                score += 2.0  # "unpopular opinion", "is a scam"
+            if any(phrase in lowered for phrase in WONDER) or any(normalize(w.text) in WONDER_WORDS for w in part):
+                score += 1.0  # "did you know", aliens, the future
+            if s.start - begin < span * 0.4:
+                score += 0.5  # near the start of this clip, where the hook is on screen
+            if s is sentences[0]:
+                score += 0.5
+            if normalize(part[0].text) in DANGLING:
+                score -= 1.0
+            score -= 0.25 * max(0, len(part) - 8)  # it's on screen for a few seconds: shorter reads faster
+            if score > best_score:
+                best, best_score = clean_sentence(" ".join(w.text for w in part)), score
     return best
+
+
+def opening_line(words: list[Word], max_words: int = 14) -> str:
+    """The first sentence (or its first clause, or first words): a better title than none at all."""
+    sentences = split_sentences(words)
+    if not sentences or len(sentences[0].words) < 3:
+        return ""
+    first = sentences[0].words
+    if len(first) <= max_words:
+        return clean_sentence(" ".join(w.text for w in first))
+    clause = _first_clause(first)
+    if 3 <= len(clause) <= max_words:
+        return clean_sentence(" ".join(w.text for w in clause))
+    return clean_sentence(" ".join(w.text for w in first[: max_words - 2])) + "…"
 
 
 def hashtag(text: str) -> str:
@@ -98,7 +133,7 @@ def built_in_copy(words: list[Word], title_hint: str, folder: str) -> Copy:
     tags = topic_tags(words)
     if folder:
         tags.insert(0, hashtag(folder))
-    title = title_hint or line or "Watch this"
+    title = title_hint or line or opening_line(words) or "Watch this"
     return Copy(hook=line, title=title, caption=line or title, hashtags=[t for t in tags if t])
 
 

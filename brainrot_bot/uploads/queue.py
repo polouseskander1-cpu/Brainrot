@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -14,6 +15,7 @@ from ..media import StopRequested
 from . import facebook, instagram, pinterest, tiktok, x, youtube
 from .accounts import account_id, folder_choices, split_account
 from .http import UploadError
+from ..versions import ranges as version_ranges
 from .post import Posted, PostInfo
 
 log = logging.getLogger("brainrot")
@@ -118,22 +120,38 @@ class UploadQueue:
                 self._warned.add(account)
         return targets
 
-    def add(self, video: Path, post: PostInfo, folder: Path | None = None, details: dict | None = None) -> list[str]:
-        """Queue a reel for every account it should go to. Returns their names."""
+    def add(self, video: Path, post: PostInfo, folder: Path | None = None, details: dict | None = None,
+            versions: dict[str, tuple[str, float, list[str]]] | None = None) -> list[str]:
+        """Queue a reel for every account it should go to. Returns their names.
+
+        versions: each platform's own version of the reel, {platform: (file, seconds, gameplay)}. A platform
+        that should have one but doesn't (e.g. under a minute for TikTok) isn't posted to; platforms
+        without a version setting get `video`.
+        """
         added = []
         waiting = self.approval_needed()
+        own = version_ranges(self.cfg) if versions is not None else {}
         for account in self.accounts_for(folder):
-            key = f"{account}|{video}"
+            platform = split_account(account)[0]
+            path, info, extra = Path(video), post, {}
+            if platform in own:
+                if platform not in versions:
+                    continue
+                file, seconds, gameplay = versions[platform]
+                path, info, extra = Path(file), replace(post, duration=seconds), {"gameplay": gameplay}
+            key = f"{account}|{path}"
             self.items[key] = {
-                "platform": split_account(account)[0],
+                "platform": platform,
                 "account": account,
-                "video": str(video),
-                "post": post.to_dict(),
+                "video": str(path),
+                "group": str(video),  # all versions of one reel: approved or skipped together
+                "post": info.to_dict(),
                 "status": "waiting" if waiting else "pending",
                 "attempts": 0,
                 "next_try": 0,
                 "added": time.time(),
                 **(details or {}),
+                **extra,
             }
             added.append(platform_name(account))
             if waiting:
@@ -146,7 +164,7 @@ class UploadQueue:
         """OK from the phone: post at the next posting time, or right away (now)."""
         count = 0
         for item in self.items.values():
-            if item["video"] == video and item["status"] in ("waiting", "pending"):
+            if item.get("group", item["video"]) == video and item["status"] in ("waiting", "pending"):
                 item["status"] = "pending"
                 item["now"] = now or item.get("now", False)
                 count += 1
@@ -164,7 +182,7 @@ class UploadQueue:
     def skip(self, video: str) -> int:
         count = 0
         for item in self.items.values():
-            if item["video"] == video and item["status"] in ("waiting", "pending"):
+            if item.get("group", item["video"]) == video and item["status"] in ("waiting", "pending"):
                 item["status"] = "skipped"
                 count += 1
         self.save()

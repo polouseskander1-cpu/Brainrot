@@ -11,6 +11,8 @@ from . import service, ui
 from .ai import CREDENTIAL_KEY as AI_KEY
 from .ai import KEY_PAGE, check_key
 from .config import FROZEN, SERVER, load_config, update_config_file
+from .versions import FOLDERS
+from .versions import ranges as version_ranges
 from .credentials import Credentials
 from .cloud import synced_folders
 from .links import add_link
@@ -424,13 +426,16 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
             ("Cover picture", on(e.thumbnail)),
             ("Extra reels with translated captions", ", ".join(cfg.captions.translate_to) or ui.dim("none")),
             ("Render with", "graphics card if possible (auto)" if cfg.video.codec == "auto" else cfg.video.codec),
+            ("A version for each platform", on(cfg.versions.enabled) + (" (" + ", ".join(
+                f"{FOLDERS[p]} {lo:g}-{hi:g}s" for p, (lo, hi) in version_ranges(cfg).items()) + ")" if cfg.versions.enabled else "")),
+            ("Reels per long video (podcast episode)", str(cfg.moments.count) if cfg.moments.count else "automatic, about 1 per 20 minutes"),
         ]
         for number, (name, value) in enumerate(items, 1):
             ui.say(f"  {ui.yellow(str(number))}) {name}: {value}")
         ui.say(f"  {ui.yellow('0')}) Back")
         choice = ui.ask("\nChange", "0")
         toggles = {"3": ("edit", "cut_silences"), "4": ("edit", "zoom"), "5": ("edit", "emojis"), "6": ("edit", "sfx"),
-                   "8": ("hook", "enabled"), "9": ("edit", "thumbnail")}
+                   "8": ("hook", "enabled"), "9": ("edit", "thumbnail"), "12": ("versions", "enabled")}
         if choice == "0" or not choice:
             return
         if choice == "1":
@@ -466,6 +471,12 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
             picked = ui.choose(["Graphics card if it works, otherwise the processor (auto)", "Always the processor (libx264)"],
                                default=1 if cfg.video.codec == "auto" else 2)
             update_config_file(config_path, {"video": {"codec": "auto" if picked == 1 else "libx264"}})
+        elif choice == "13":
+            ui.say("How many reels from each long video (5 minutes or longer)? 0 = automatic (about one per 20 minutes,")
+            ui.say("so 6 from a 2-hour episode). The bot always takes the strongest moments.")
+            answer = ui.ask("Reels", str(cfg.moments.count))
+            if answer.isdigit() and int(answer) <= 50:
+                update_config_file(config_path, {"moments": {"count": int(answer)}})
 
 
 def add_video_link(cfg: SimpleNamespace) -> None:

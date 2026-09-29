@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,7 +24,7 @@ from .config import APP_DIR, FONTS_DIR, MODELS_DIR, SERVER, STOP_FILE, WORK_DIR
 from .copywriter import merge_hashtags, write_copy
 from .credentials import Credentials
 from .dedupe import Fingerprints, frame_hashes, quick_hash, sound_bits, text_signature
-from .editor import EditPlan, plan_edit
+from .editor import EditPlan, edited_length, plan_edit
 from .faces import find_faces
 from .gpu import setup_codec
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
@@ -42,6 +42,8 @@ from .thumbnail import make_cover
 from .transcribe import Transcriber, Word
 from .translate import SCRIPT_FONTS, base_language, caption_settings, language_name, translate_reel
 from .uploads import PostInfo, UploadQueue, pretty_title
+from .versions import FOLDERS, WHY, Cut, moment_range, plan_cuts
+from .versions import ranges as version_ranges
 
 log = logging.getLogger("brainrot")
 
@@ -72,6 +74,9 @@ class Rendered:
     post: PostInfo
     cover: Path | None = None
     language: str = ""  # set for translated reels
+    platforms: list[str] = field(default_factory=list)  # the platforms this version is for (versions on)
+    group: str = ""  # versions of the same reel share this
+    files: dict[str, Path] = field(default_factory=dict)  # platform -> its copy in Reels/<Platform>/
 
     @property
     def title(self) -> str:
@@ -139,6 +144,14 @@ def publish(src: Path, dest: Path) -> None:
         partial = dest.with_name("." + dest.name + ".partial")
         shutil.copyfile(src, partial)
         os.replace(partial, dest)
+
+
+def copy_into(src: Path, dest: Path) -> None:
+    """Like publish(), but the source stays where it is."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name("." + dest.name + ".partial")
+    shutil.copyfile(src, partial)
+    os.replace(partial, dest)
 
 
 def unique_path(folder: Path, stem: str, suffix: str) -> Path:
@@ -496,7 +509,7 @@ class Bot:
             self._save()
             return []
 
-        outputs = [item.video for item in rendered]
+        outputs = [path for item in rendered for path in (list(item.files.values()) or [item.video])]
         entry.update(
             status="done",
             outputs=[str(p) for p in outputs],
@@ -504,16 +517,24 @@ class Bot:
         )
         if self.uploads is not None:
             folder = key.split("/")[0] if "/" in key else ""
+            groups: dict[str, list[Rendered]] = {}
             for item in rendered:
                 if item.language and not self.cfg.upload.post_translations:
                     continue
-                details = {"folder": folder, "clip": key, "gameplay": sorted({s.key for s in item.segments}), "language": item.language}
-                platforms = self.uploads.add(item.video, item.post, clip.parent, details)
+                groups.setdefault(item.group or str(item.video), []).append(item)
+            for items in groups.values():
+                main = items[0]  # the longest version: what the phone shows
+                details = {"folder": folder, "clip": key, "gameplay": sorted({s.key for s in main.segments}), "language": main.language}
+                versions = None
+                if any(i.platforms for i in items):
+                    versions = {p: (str(path), i.post.duration, sorted({s.key for s in i.segments}))
+                                for i in items for p, path in i.files.items()}
+                platforms = self.uploads.add(main.video, main.post, clip.parent, details, versions=versions)
                 if platforms:
-                    log.info("Queued %s for posting on %s%s", item.video.name, ", ".join(platforms),
+                    log.info("Queued %s for posting on %s%s", main.video.name, ", ".join(platforms),
                              " (waiting for your OK on the phone)" if self.uploads.approval_needed() else "")
                 if self.phone is not None:
-                    self.phone.reel_ready(item.video, item.cover, item.post.title, folder, item.post.duration, platforms,
+                    self.phone.reel_ready(main.video, main.cover, main.post.title, folder, main.post.duration, platforms,
                                           self.uploads.approval_needed() and bool(platforms))
         for name in ("error", "next_try", "same_as"):
             entry.pop(name, None)
@@ -525,6 +546,26 @@ class Bot:
     def _save(self) -> None:
         if self.persist:
             self.state.save()
+
+    def _publish_versions(self, item: Rendered, rel_dir: Path, name: str) -> None:
+        first: Path | None = None
+        cover = item.cover if item.cover is not None and item.cover.exists() else None
+        for platform in item.platforms:
+            final = unique_path(self.cfg.paths.output / FOLDERS[platform] / rel_dir, name, ".mp4")
+            if first is None:
+                publish(item.video, final)
+                if cover is not None:
+                    publish(cover, final.with_suffix(".jpg"))
+                first = final
+            else:
+                copy_into(first, final)
+                if cover is not None:
+                    copy_into(first.with_suffix(".jpg"), final.with_suffix(".jpg"))
+            if item.srt:
+                final.with_suffix(".srt").write_text(item.srt, encoding="utf-8")
+            item.files[platform] = final
+        item.video = first
+        item.cover = first.with_suffix(".jpg") if cover is not None else None
 
     def make_reels(self, clip: Path, gameplay: list[Footage]) -> list[Rendered]:
         info = probe(self.tools, clip)
@@ -595,6 +636,9 @@ class Bot:
             out_dir = self.cfg.paths.output / rel_dir
             for item in rendered:
                 suffix = item.suffix + ("_preview" if self.preview_seconds else "")
+                if item.platforms:  # one copy in each platform's folder: Reels/TikTok/<podcast>/...
+                    self._publish_versions(item, rel_dir, clip.stem + suffix)
+                    continue
                 final = unique_path(out_dir, clip.stem + suffix, ".mp4")
                 publish(item.video, final)
                 item.video = final
@@ -621,16 +665,18 @@ class Bot:
         m = self.cfg.moments
         if m.enabled and duration >= m.min_source_minutes * 60 and ctx.words:
             count = auto_count(duration, m.count, m.max_count)
+            min_s, max_s = moment_range(self.cfg)
             moments = None
             if self.cfg.ai.moments and self.ai.available:
                 sentences = split_sentences(ctx.words)
                 source = f' called "{pretty_title(ctx.path.stem)}"' + (f' (from "{ctx.folder}")' if ctx.folder else "")
                 picks = self.ai.pick_moments(transcript_for_ai(sentences), _length_text(duration), source, count,
-                                             int(m.min_seconds), int(m.max_seconds))
+                                             round(min_s), round(max_s))
                 if picks:
-                    moments = moments_from_picks(picks, sentences, duration, count, m.min_seconds, m.max_seconds)
+                    moments = moments_from_picks(picks, sentences, duration, count, min_s, max_s)
             if not moments:
-                moments = find_moments(ctx.words, duration, count, m.min_seconds, m.max_seconds, ctx.loudness)
+                moments = find_moments(ctx.words, duration, count, min_s, max_s, ctx.loudness)
+            self._stretch_moments(ctx, moments, duration)
             log.info("Long video: making %d reel(s) from its best moments: %s", len(moments),
                      ", ".join(f"{int(x.start // 60)}:{int(x.start % 60):02d}" for x in moments))
             return [Piece(x.start, x.end, f"_moment{i}", hook=x.hook) for i, x in enumerate(moments, 1)]
@@ -641,6 +687,31 @@ class Bot:
             Piece(start, end, f"_part{i}" if n > 1 else "", f"PART {i}/{n}" if n > 1 else "", title_suffix=f" (Part {i}/{n})" if n > 1 else "")
             for i, (start, end) in enumerate(parts, 1)
         ]
+
+    def _stretch_moments(self, ctx: _Clip, moments: list, duration: float) -> None:
+        """Pauses get cut, so a moment can end up shorter than the longest version needs (TikTok: 1 minute).
+        Add the sentences that follow until it's long enough, without running into the next moment."""
+        targets = version_ranges(self.cfg)
+        if not targets or not ctx.words:
+            return
+        need = max(lo for lo, _ in targets.values())
+        limit = max(hi for lo, hi in targets.values() if lo == need)
+        fps = ctx.layout.fps
+        sentences = split_sentences(ctx.words)
+        starts = sorted(m.start for m in moments)
+        for m in moments:
+            if edited_length(self.cfg, fps, m.start, m.end, ctx.words, ctx.loudness) >= need:
+                continue
+            stop = next((s for s in starts if s > m.start), duration)
+            for s in sentences:
+                if s.start < m.end - 0.5:
+                    continue
+                end = min(duration, s.end + 0.4)
+                if end > stop - 1 or edited_length(self.cfg, fps, m.start, end, ctx.words, ctx.loudness) > limit:
+                    break
+                m.end = end
+                if edited_length(self.cfg, fps, m.start, end, ctx.words, ctx.loudness) >= need:
+                    break
 
     def _make_piece(self, ctx: _Clip, piece: Piece, index: int) -> list[Rendered]:
         cfg = self.cfg
@@ -665,17 +736,54 @@ class Bot:
         # Most specific first: platforms that allow only a few hashtags (Instagram: 5, X: 2) keep these.
         hashtags = merge_hashtags(folder_hashtags(ctx.path), text.hashtags, cfg.upload.hashtags)
 
-        item, job, plan, clean = self._render_part(ctx, piece, index, hook, title)
-        item.post = PostInfo(title, hashtags, plan.duration, description)
-        results = [item]
+        cuts = self._plan_cuts(ctx, piece)
+        results = []
         spoken = base_language(ctx.language or cfg.captions.language)
-        for lang in cfg.captions.translate_to:
-            if base_language(lang) == spoken:
-                continue
-            translated = self._render_translation(ctx, piece, index, job, plan, clean, lang, hook, item.post)
-            if translated is not None:
-                results.append(translated)
+        for n, cut in enumerate(cuts):
+            tag = f"{index}" if len(cuts) == 1 else f"{index}{chr(97 + n)}"
+            part = replace(piece, start=cut.start, end=cut.end)
+            item, job, plan, clean = self._render_part(ctx, part, tag, hook, title, cut.platforms)
+            item.post = PostInfo(title, hashtags, plan.duration, description)
+            item.platforms, item.group = list(cut.platforms), piece.suffix or "reel"
+            results.append(item)
+            for lang in cfg.captions.translate_to:
+                if base_language(lang) == spoken:
+                    continue
+                translated = self._render_translation(ctx, part, tag, job, plan, clean, lang, hook, item.post)
+                if translated is not None:
+                    translated.platforms, translated.group = list(cut.platforms), f"{item.group}_{lang}"
+                    results.append(translated)
         return results
+
+    def _plan_cuts(self, ctx: _Clip, piece: Piece) -> list[Cut]:
+        """The versions to render: which part of the piece each platform gets (versions off: all of it)."""
+        targets = version_ranges(self.cfg)
+        if not targets:
+            return [Cut(piece.start, piece.end, piece.end - piece.start)]
+        fps = ctx.layout.fps
+        cuts, left_out = plan_cuts(
+            piece.start, piece.end, ctx.words, targets,
+            lambda a, b: edited_length(self.cfg, fps, a, b, ctx.words, ctx.loudness),
+            lambda a, b, lo, hi: self._best_windows(ctx, a, b, lo, hi),
+        )
+        for platform, length in left_out.items():
+            reason = WHY.get(platform, "no part of it fits " + "-".join(f"{x:g}" for x in targets[platform]) + " seconds")
+            log.info("No %s version of this reel: it's %.0fs long (%s).", FOLDERS[platform], length, reason)
+        return cuts
+
+    def _best_windows(self, ctx: _Clip, a: float, b: float, lo: float, hi: float) -> list[tuple[float, float]]:
+        """The best parts of a-b to cut a shorter version from (whole sentences), best first."""
+        inside = [w for w in ctx.words if a <= w.start and w.end <= b + 0.3]
+        if not inside:  # nothing said: just the beginning
+            return [(a, a + hi)] if b - a > hi else []
+        windows: list[tuple[float, float]] = []
+        # Prefer using most of the time allowed; room is left for the pauses that get cut.
+        for low in (max(lo * (1.08 if lo > 30 else 1.0), min(hi - 10, 30.0)), lo):
+            for m in find_moments(inside, b, 5, min(low, hi - 1), hi, ctx.loudness):
+                window = (max(a, m.start), min(b, m.end))
+                if window not in windows:
+                    windows.append(window)
+        return windows
 
     # ------------------------------------------------------------ rendering
 
@@ -745,7 +853,7 @@ class Bot:
             log.warning("Couldn't make the cover picture: %s", exc)
             return None
 
-    def _render_part(self, ctx: _Clip, piece: Piece, index: int, hook_text: str, title: str):
+    def _render_part(self, ctx: _Clip, piece: Piece, index: int | str, hook_text: str, title: str, platforms: list[str] | None = None):
         cfg = self.cfg
         edit = cfg.edit
         layout = ctx.layout
@@ -794,6 +902,8 @@ class Bot:
             track, music_start = choice
             job.music, job.music_start, job.music_loop = track.path, music_start, track.duration < length + 1
         what = f" {piece.suffix.lstrip('_').replace('part', 'part ').replace('moment', 'moment ')}" if piece.suffix else ""
+        if platforms:
+            what += " for " + ", ".join(FOLDERS[p] for p in platforms)
         pieces = ", ".join(f"{s.key} @{s.start:.0f}s" for s in segments) or "none (full-screen clip)"
         cut = piece.end - piece.start - length
         log.info(
@@ -823,7 +933,7 @@ class Bot:
         item = Rendered(job.output, srt, segments, piece.suffix, PostInfo(title, "", length), cover)
         return item, job, plan, clean
 
-    def _render_translation(self, ctx: _Clip, piece: Piece, index: int, job: RenderJob, plan: EditPlan,
+    def _render_translation(self, ctx: _Clip, piece: Piece, index: int | str, job: RenderJob, plan: EditPlan,
                             clean: Path | None, lang: str, hook_text: str, post: PostInfo) -> Rendered | None:
         """The same reel with the captions (and hook, title, caption) in another language."""
         cfg = self.cfg

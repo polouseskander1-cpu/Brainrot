@@ -56,9 +56,11 @@ jobs:
           docker run --rm -v "$PWD/data:/data" --entrypoint ffmpeg brainrot-bot -hide_banner -loglevel error \
             -f lavfi -i "testsrc=s=1920x1080:r=30" -t 30 -c:v libx264 -preset ultrafast /data/gameplay/run.mp4
           docker run --rm -v "$PWD/data:/data" brainrot-bot --once
-          ls -la "data/output/Test Show"
-          test -f "data/output/Test Show/clip.mp4"
-          test "$(stat -c %u "data/output/Test Show/clip.mp4")" = "$(id -u)"
+          # a 6-second clip: versions for YouTube, Instagram and Facebook, none for TikTok (1 minute or longer)
+          ls -la data/output/*/"Test Show"
+          test -f "data/output/YouTube/Test Show/clip.mp4" && test -f "data/output/Facebook/Test Show/clip.mp4"
+          test ! -e "data/output/TikTok/Test Show/clip.mp4"
+          test "$(stat -c %u "data/output/YouTube/Test Show/clip.mp4")" = "$(id -u)"
           test -z "$(find data -user root)"
           docker run --rm -v "$PWD/data:/data" -e BRAINROT_PUBLIC_URL=http://192.168.1.50:8770 brainrot-bot --dashboard | tail -1 | grep -q "192.168.1.50:8770/?key="
           echo "SERVER IMAGE TEST PASSED"
@@ -160,9 +162,11 @@ jobs:
 
           Write-Host "== render one clip (downloads the tiny speech model)"
           & $exe --config ci/config.yaml --clip ci/clip.mp4
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path ci/output/clip.mp4)) { throw "render failed" }
-          & test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration:stream=width,height -of compact ci/output/clip.mp4
-          if (Test-Path ci/output/clip.srt) { Get-Content ci/output/clip.srt | Select-Object -First 8 }
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path ci/output/YouTube/clip.mp4)) { throw "render failed" }
+          # under a minute: YouTube, Instagram and Facebook versions, no TikTok one (TikTok pays for 1 minute or longer)
+          if (-not (Test-Path ci/output/Instagram/clip.mp4) -or (Test-Path ci/output/TikTok/clip.mp4)) { throw "wrong platform versions" }
+          & test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration:stream=width,height -of compact ci/output/YouTube/clip.mp4
+          if (Test-Path ci/output/YouTube/clip.srt) { Get-Content ci/output/YouTube/clip.srt | Select-Object -First 8 }
 
           Write-Host "== setup wizard + background bot"
           $wiz = New-Item -ItemType Directory -Force ci/wiz
@@ -174,7 +178,7 @@ jobs:
           Copy-Item ci/gameplay/run.mp4 "$($wiz.FullName)\Gameplay\"
           New-Item -ItemType Directory -Force "$($wiz.FullName)\Clips\Cat Facts" | Out-Null
           Copy-Item ci/clip.mp4 "$($wiz.FullName)\Clips\Cat Facts\cats.mp4"
-          $reel = "$($wiz.FullName)\Reels\Cat Facts\cats.mp4"
+          $reel = "$($wiz.FullName)\Reels\YouTube\Cat Facts\cats.mp4"
           for ($i = 0; $i -lt 60 -and -not (Test-Path $reel); $i++) { Start-Sleep 5 }
           Get-Content "$($wiz.FullName)\logs\bot.log" -Tail 15
           & $exe --stop
@@ -189,7 +193,7 @@ jobs:
           "folders:`n  clips: clips`n  gameplay: $($ci.FullName)\gameplay`n  output: output`ncaptions:`n  model: tiny`nvideo:`n  preset: veryfast`napp:`n  setup_done: true`nwatch:`n  settle_seconds: 1`n" | Set-Content -Encoding utf8 ci/linkws/config.yaml
           & $exe --config ci/linkws/config.yaml --once
           Stop-Process $server
-          $made = Get-ChildItem ci/linkws/output/Show -Filter *.mp4 -ErrorAction SilentlyContinue
+          $made = Get-ChildItem ci/linkws/output/YouTube/Show -Filter *.mp4 -ErrorAction SilentlyContinue
           if (-not $made) { Get-Content ci/linkws/logs/bot.log -Tail 20; throw "the link was not downloaded and made into a reel" }
           $made | Format-Table Name, Length
           Write-Host "APP TEST PASSED"

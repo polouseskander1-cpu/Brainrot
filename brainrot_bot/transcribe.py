@@ -70,7 +70,10 @@ class Transcriber:
             self.models_dir.mkdir(parents=True, exist_ok=True)
             kwargs["download_root"] = str(self.models_dir)
         compute_type = "int8" if device == "cpu" else "auto"
-        return WhisperModel(self.model_name, device=device, compute_type=compute_type, **kwargs)
+        # Half the logical cores (the physical ones, usually), at least 4: long episodes listen much faster
+        # on bigger PCs, and the bot runs at low priority, so the rest of the computer stays responsive.
+        threads = max(4, (os.cpu_count() or 4) // 2)
+        return WhisperModel(self.model_name, device=device, compute_type=compute_type, cpu_threads=threads, **kwargs)
 
     def load(self) -> None:
         if self._model is None:

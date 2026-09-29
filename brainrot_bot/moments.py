@@ -28,6 +28,19 @@ STORY = ("happened to me", "i lost", "i remember", "one day", "my life", "i thou
          "i realized", "changed my life", "never forget", "the worst", "the best thing", "true story")
 EMOTION = set("shaking crying cried scared terrified afraid panic panicked shocked heartbroken furious desperate broke "
               "fired died gone destroyed ruined betrayed embarrassed".split())
+# Hot takes and arguments: people comment, share and argue about these.
+HOT_TAKE = ("unpopular opinion", "hot take", "controversial", "nobody talks about", "no one talks about", "nobody wants to hear",
+            "the truth is", "the truth about", "don't want you to know", "is a scam", "is a lie", "lied to", "the biggest lie",
+            "worst advice", "overrated", "i disagree", "you're wrong", "everyone is wrong", "people get angry", "get so mad",
+            "offended", "cancelled", "canceled", "conspiracy", "cover up", "cover-up", "propaganda", "brainwashed",
+            "hate me for", "the real reason", "what they don't tell you", "exposed", "scandal", "stop doing", "illegal", "banned")
+# Mind-blowing facts, space, the future, the unexplained: sci-fi talk keeps people watching.
+WONDER_WORDS = set("aliens alien ufo ufos universe simulation galaxy galaxies planet planets mars venus jupiter asteroid nasa "
+                   "quantum multiverse dimension dimensions robot robots consciousness immortal immortality extinction "
+                   "apocalypse physicists paradox mysterious mystery unexplained impossible telescope wormhole".split())
+WONDER = ("did you know", "black hole", "time travel", "parallel universe", "artificial intelligence", "the future",
+          "mind blowing", "blows my mind", "blew my mind", "nobody knows", "no one knows", "can't explain", "cannot explain",
+          "speed of light", "thought experiment", "not real", "living in a simulation")
 MAX_SENTENCE = 20.0  # seconds; longer "sentences" (no punctuation) are split at commas or pauses
 
 
@@ -163,7 +176,15 @@ def _window_score(sentences: list[Sentence], feats: list[_Features], i: int, j: 
     promo = -2.5 * min(2, sum(text.count(p) for p in PROMO))
     story = min(1.8, 0.6 * sum(text.count(p) for p in STORY))
     emotion = min(1.2, 0.4 * sum(1 for s in sentences[i : j + 1] for w in s.words if normalize(w.text) in EMOTION))
-    return content + hook + ending + energy + fillers + dead_air + fit + promo + story + emotion
+    hot = min(2.0, 0.7 * sum(text.count(p) for p in HOT_TAKE))
+    wonder_hits = sum(text.count(p) for p in WONDER) + sum(1 for s in sentences[i : j + 1] for w in s.words
+                                                           if normalize(w.text) in WONDER_WORDS)
+    wonder = min(1.8, 0.35 * wonder_hits)
+    # A take or a mind-blowing idea right at the start is the best hook there is.
+    first_text = " " + sentences[i].text.lower() + " "
+    if any(p in first_text for p in HOT_TAKE + WONDER):
+        hook += 0.6
+    return content + hook + ending + energy + fillers + dead_air + fit + promo + story + emotion + hot + wonder
 
 
 def find_moments(
@@ -213,10 +234,11 @@ def _padded(moment: Moment, duration: float) -> Moment:
 
 
 def auto_count(duration: float, count: int, max_count: int) -> int:
-    """How many reels to make from one long video: `count`, or about one per 8 minutes."""
+    """How many reels to make from one long video: `count`, or about one per 20 minutes (6 from 2 hours):
+    a few strong reels do better than many average ones."""
     if count > 0:
         return count
-    return max(1, min(max_count, round(duration / 60 / 8)))
+    return max(1, min(max_count, round(duration / 60 / 20)))
 
 
 # ------------------------------------------------------------------ checking the AI's picks

@@ -278,3 +278,14 @@ def test_setup_offers_the_google_drive_folder(config, tmp_path, monkeypatch):
     base = drive / "Brainrot Bot"
     assert (cfg.paths.gameplay, cfg.paths.clips, cfg.paths.output, cfg.paths.music) == (
         base / "Gameplay", base / "Clips", base / "Reels", base / "Music")
+
+
+def test_look_menu_sets_versions_and_reels_per_episode(config, monkeypatch):
+    from brainrot_bot.wizard import choose_look
+
+    typed(monkeypatch, "13", "6", "12", "0")  # 6 reels per long video, then versions off
+    choose_look(load_config(config), config)
+    cfg = load_config(config)
+    assert cfg.moments.count == 6 and cfg.versions.enabled is False
+    text = config.read_text(encoding="utf-8")
+    assert "tiktok: 61-90" in text  # the rest of the settings and their comments are kept

@@ -88,7 +88,7 @@ Pick up to {count} moments that would make the best clips. Each moment:
 - grabs attention in the first 3 seconds (a bold claim, a question, a number, the start of a story) and ends on a complete thought or a punchline;
 - does not overlap another moment.
 
-Prefer surprising, funny, emotional, useful or controversial moments. Skip intros, outros, sponsor reads and small talk. A few strong moments are better than filling the list with weak ones.
+Prefer moments people can't scroll past: controversial opinions and hot takes, surprising or mind-blowing facts, sci-fi, space and future ideas, the unexplained, strong emotions, stories with a twist, funny moments and genuinely useful advice. Skip intros, outros, sponsor reads and small talk. A few strong moments are better than filling the list with weak ones.
 
 For each moment also write:
 - hook: a short title shown on screen during the first seconds, in the language of the video. At most 8 words. It should make people want to see the payoff without giving it away. No hashtags, emojis or quotation marks.

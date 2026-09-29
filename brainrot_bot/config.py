@@ -148,6 +148,15 @@ DEFAULTS: dict[str, Any] = {
         "min_seconds": 20,
         "max_seconds": 60,
     },
+    "versions": {
+        "enabled": True,
+        "tiktok": "61-90",
+        "youtube": "3-59",
+        "instagram": "3-90",
+        "facebook": "3-90",
+        "x": "",
+        "pinterest": "",
+    },
     "links": {
         "enabled": True,
         "max_height": 1080,
@@ -393,6 +402,17 @@ def _validate(c: dict) -> None:
     m["max_seconds"] = _num("moments.max_seconds", m["max_seconds"], 10, 900)
     if m["max_seconds"] < m["min_seconds"] + 5:
         raise ConfigError("'moments.max_seconds' must be at least 5 more than 'moments.min_seconds'")
+
+    v = c["versions"]
+    v["enabled"] = bool(v["enabled"])
+    from .versions import FOLDERS, parse_range
+
+    for platform in FOLDERS:
+        try:
+            parse_range(f"versions.{platform}", v[platform])
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
+        v[platform] = "" if v[platform] is None or v[platform] is False else str(v[platform]).strip()
 
     lk = c["links"]
     lk["enabled"] = bool(lk["enabled"])

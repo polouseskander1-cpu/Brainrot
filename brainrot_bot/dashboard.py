@@ -84,9 +84,10 @@ def dashboard_data(state: dict, status: str, output: Path, folders: list[str]) -
     for item in state.get("uploads", {}).values():
         if item.get("status") != "waiting":
             continue
-        entry = waiting.setdefault(item["video"], {
-            "video": item["video"], "name": Path(item["video"]).name, "title": (item.get("post") or {}).get("title", ""),
-            "folder": item.get("folder", ""), "cover": media(item["video"], ".jpg"), "play": media(item["video"], ".mp4"),
+        reel = item.get("group", item["video"])  # versions of one reel are shown (and approved) together
+        entry = waiting.setdefault(reel, {
+            "video": reel, "name": Path(reel).name, "title": (item.get("post") or {}).get("title", ""),
+            "folder": item.get("folder", ""), "cover": media(reel, ".jpg"), "play": media(reel, ".mp4"),
             "accounts": []})
         account = item.get("account", item["platform"])
         entry["accounts"].append(platform_name(account) if item["platform"] in PLATFORMS else account)
@@ -145,7 +146,8 @@ class Dashboard:
         kind = str(body.get("kind", ""))
         if kind in ("approve", "now", "skip"):
             video = str(body.get("video", ""))
-            waiting = {i.get("video") for i in self.read_state().get("uploads", {}).values() if i.get("status") in ("waiting", "pending")}
+            waiting = {i.get("group", i.get("video")) for i in self.read_state().get("uploads", {}).values()
+                       if i.get("status") in ("waiting", "pending")}
             if video not in waiting:
                 return 404, {"error": "that reel isn't waiting anymore"}
             self.actions.put(Action(kind, video=video))

@@ -86,7 +86,8 @@ def test_find_moments_never_overlap_and_respect_limits():
 
 
 def test_auto_count():
-    assert auto_count(3600, 0, 12) == 8 and auto_count(3 * 3600, 0, 12) == 12 and auto_count(200, 0, 12) == 1
+    assert auto_count(2 * 3600, 0, 12) == 6 and auto_count(3600, 0, 12) == 3 and auto_count(200, 0, 12) == 1
+    assert auto_count(10 * 3600, 0, 12) == 12  # never more than max_count
     assert auto_count(3600, 3, 12) == 3
 
 
@@ -381,3 +382,24 @@ def test_state_keeps_links_and_fingerprints(tmp_path):
     loaded = json.loads(Path(tmp_path / "s.json").read_text())
     assert loaded["links"]["x"]["status"] == "done"
     assert State(tmp_path / "s.json").data["fingerprints"] == [{"key": "k"}]
+
+
+def test_hooks_come_from_hot_takes_and_sci_fi_even_late_in_a_long_episode():
+    from brainrot_bot.copywriter import best_line, opening_line
+
+    def said(text, start):
+        out, t = [], start
+        for token in text.split():
+            out.append(Word(token, t, t + 0.3))
+            t += 0.4
+        return out
+
+    late = 2969.0  # 49 minutes into an episode: "near the start" means the start of this moment
+    moment = (said("Here is my unpopular opinion, and people get really angry when I say it.", late)
+              + said("We talked about the weather for a while.", late + 8)
+              + said("It was a regular kind of day.", late + 14))
+    assert best_line(moment) == "Here is my unpopular opinion"  # the first clause of a long sentence
+    space = said("Did you know that a day on Venus is longer than its whole year?", late) + said("It was fine.", late + 8)
+    assert best_line(space) == "Did you know that a day on Venus is longer than its whole year?"
+    plain = said("So we went to the shop and then we went home and then we had some dinner together.", late)
+    assert best_line(plain) == "" and opening_line(plain).endswith("…")  # no hook, but a title that doesn't stop mid-word
