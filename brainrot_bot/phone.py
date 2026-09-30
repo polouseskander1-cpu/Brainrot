@@ -70,10 +70,12 @@ def make_preview(tools: Tools, video: Path, out: Path) -> Path | None:
     return out if out.exists() else None
 
 
-def _describe(title: str, folder: str, duration: float, targets: list[str], waiting: bool) -> str:
+def _describe(title: str, folder: str, duration: float, targets: list[str], waiting: bool, note: str = "") -> str:
     lines = [f"New reel: {title}"]
     if folder:
         lines.append(f"From: {folder} - {duration:.0f}s")
+    if note:
+        lines.append("Voiceover:\n" + note)
     if targets:
         lines.append(("Will be posted on: " if not waiting else "Post on: ") + ", ".join(targets))
         lines.append("Waiting for your OK." if waiting else "")
@@ -460,7 +462,8 @@ class Phone:
 
     # ------------------------------------------------------------------ what the bot tells you (main thread)
 
-    def reel_ready(self, video: Path, cover: Path | None, title: str, folder: str, duration: float, targets: list[str], waiting: bool) -> None:
+    def reel_ready(self, video: Path, cover: Path | None, title: str, folder: str, duration: float, targets: list[str],
+                   waiting: bool, note: str = "") -> None:
         if not self.enabled:
             return
         ref = secrets.token_hex(4)
@@ -471,7 +474,7 @@ class Phone:
                 for old in list(refs)[: len(refs) - 500]:
                     refs.pop(old, None)
             self._save()
-        self.outbox.put(("reel", ref, video, cover, _describe(title, folder, duration, targets, waiting), waiting, bool(targets)))
+        self.outbox.put(("reel", ref, video, cover, _describe(title, folder, duration, targets, waiting, note), waiting, bool(targets)))
 
     def posted(self, item: dict) -> None:
         if self.enabled and self.cfg.phone.notify_posted:

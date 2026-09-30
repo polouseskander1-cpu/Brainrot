@@ -64,8 +64,49 @@ built only on that are the ones most often refused or demonetized, and a podcast
 YouTube's Content ID can claim your Short (the money then goes to them). What helps:
 
 - clip podcasts you own, or that allow clipping (many podcasters are happy to be clipped; ask);
-- add something of your own: your commentary or reaction, on screen or as a voice-over;
+- add something of your own: your commentary or reaction (the bot's [voiceover](#the-commentary-voiceover));
 - credit the source in the caption.
+
+### The commentary voiceover
+
+YouTube's [reused content rule](https://support.google.com/youtube/answer/1311392) is the clearest about
+what counts: clips "without adding significant original commentary, substantive modifications, or
+educational or entertainment value" can't earn, while "reaction videos where you comment on the original
+video" and footage "where you add a storyline and commentary" can. So each reel can pause the clip for a
+voiceover: a short line before it and a take after it, with its own captions.
+
+Where the words come from, best first:
+
+1. **Your own voice.** Record your take and save it next to the clip as `<clip>.outro.mp3` (any audio
+   file: `.m4a` from a phone works), and a line for the start as `<clip>.intro.mp3` if you like. They're
+   played as they are, with captions.
+2. **Your own words.** Write them in `<clip>.commentary.txt` and the voice reads them. Everything is
+   said after the clip, except a part that starts with `intro:`, which is said before it:
+   ```
+   intro: This is the most expensive mistake people make with money.
+   outro: He's right about renting, but he skips the risk. One bad tenant can wipe out a year of profit.
+   Would you still buy?
+   ```
+   Your files go with every reel made from that clip, so they suit short clips; for a long episode, the
+   AI writes a take for each moment. Add them before the clip, or together with it: a clip is made into
+   reels about 10 seconds after it arrives.
+3. **The AI helper** (menu > AI) writes a take for every reel: it's told to add context, a fact or a
+   counterpoint rather than repeat the clip, and to end on a question. Set **your angle** in the menu
+   (Look & features > Commentary voiceover) so the takes sound like one person with opinions, not a
+   template. The phone message for each reel shows what it says: with `phone.approval` on, check it
+   before it's posted.
+
+Honestly: a computer voice reading an AI's take is better than a bare repost, but it isn't a guarantee.
+YouTube's [inauthentic content rule](https://support.google.com/youtube/answer/1311392) also names
+"AI-generated content made with generic or unoriginal templates giving the impression of mass
+production", and [Meta](https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/) says
+"narrating what's already on screen - without adding anything meaningful" is unoriginal, while "fresh
+information, analysis" counts. Your own voice and your own opinions are what the platforms reward most;
+the voiceover makes adding them one file per clip.
+
+A generic narrator voice isn't the kind of AI content YouTube asks you to
+[label](https://support.google.com/youtube/answer/14328491) (that's realistic content, like making a real
+person say something they didn't), so the bot doesn't label posts as AI-made.
 
 ## When and what gets posted
 

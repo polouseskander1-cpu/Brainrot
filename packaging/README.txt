@@ -24,6 +24,11 @@ BRAINROT BOT - quick start (Windows)
    Long videos (whole episodes) are cut into their best moments: about 6 reels from a 2-hour episode.
    You can also add a YouTube / TikTok link from the menu or from your phone.
 
+5. Commentary voiceover (so reposted clips count as original): the clip pauses for a line before it
+   and a take after it, read by a natural voice (downloaded once, about 85 MB). The AI helper writes
+   the take, or use your own: a recording saved next to the clip as <clip>.outro.mp3, or your words
+   in <clip>.commentary.txt. Menu > Look & features > Commentary voiceover.
+
 Double-click BrainrotBot.exe again at any time for the menu: what the bot is doing, the folders,
 add a video link, the phone dashboard (scan its QR code on the same Wi-Fi), stats, look & features,
 connect accounts, and start / stop. While it runs in the background, its icon sits next to the clock.

@@ -37,6 +37,7 @@ class Chunk:
     words: list[CaptionWord]
     start: float
     end: float
+    voice: bool = False  # the voiceover's words (shown in commentary.caption_color)
 
     @property
     def text(self) -> str:
@@ -208,6 +209,7 @@ def build_ass(
     captions: SimpleNamespace,
     hook_cfg: SimpleNamespace | None = None,
     hook: Hook | None = None,
+    voice_color: str = "",
 ) -> str:
     c = captions
     margin = round(width * 0.07)
@@ -229,6 +231,13 @@ def build_ass(
         f"{style_color(c.stroke_color)},{style_color(c.shadow_color, c.shadow_opacity)},0,0,0,0,100,100,0,0,1,"
         f"{c.stroke_width:g},0,5,{margin},{margin},0,1",
     ]
+    if any(chunk.voice for chunk in chunks):
+        color = voice_color or c.color
+        header.append(
+            f"Style: Voice,{font},{c.font_size},{style_color(color)},{style_color(color)},"
+            f"{style_color(c.stroke_color)},{style_color(c.shadow_color, c.shadow_opacity)},0,0,0,0,100,100,0,0,1,"
+            f"{c.stroke_width:g},0,5,{margin},{margin},0,1"
+        )
     if hook_cfg is not None:
         pad = max(8, round(hook_cfg.font_size * 0.32))
         header.append(
@@ -254,8 +263,8 @@ def build_ass(
                 f"\\blur{c.shadow_blur:g}}}{chunk.text}"
             )
         events.append(
-            f"Dialogue: 1,{start},{end},Caption,,0,0,0,,{{\\an5\\pos({x},{y}){pop}\\blur0.6}}"
-            f"{_rich_text(chunk, c)}"
+            f"Dialogue: 1,{start},{end},{'Voice' if chunk.voice else 'Caption'},,0,0,0,,{{\\an5\\pos({x},{y}){pop}\\blur0.6}}"
+            f"{chunk.text if chunk.voice else _rich_text(chunk, c)}"
         )
 
     if hook is not None and hook.text.strip():

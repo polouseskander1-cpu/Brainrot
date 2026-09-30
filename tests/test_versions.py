@@ -148,8 +148,14 @@ def test_moments_are_stretched_until_the_tiktok_version_is_a_minute():
     edited = lambda m: edited_length(cfg, 30, m.start, m.end, words)  # noqa: E731
     first, second = Moment(0.0, 70.0, 5.0), Moment(200.0, 270.0, 4.0)
     assert edited(first) < 61  # 70 s of this, once the pauses are cut, isn't a minute
-    Bot._stretch_moments(SimpleNamespace(cfg=cfg), ctx, [first, second], 300.0)
+    bot = SimpleNamespace(cfg=cfg)
+    bot._stretch = lambda *args: Bot._stretch(bot, *args)
+    Bot._stretch_moments(bot, ctx, [first, second], 300.0)
     assert 61 <= edited(first) <= 90 and first.end < 199  # long enough now, and it stops before the next one
     blocked = [Moment(0.0, 70.0, 5.0), Moment(80.0, 150.0, 4.0)]
-    Bot._stretch_moments(SimpleNamespace(cfg=cfg), ctx, blocked, 300.0)
+    Bot._stretch_moments(bot, ctx, blocked, 300.0)
     assert blocked[0].end < 79  # never runs into the next moment (that one just gets no TikTok version)
+    # A 12-second voiceover counts towards the minute: the moment itself needs only 49 s.
+    voiced = Moment(0.0, 40.0, 5.0)
+    Bot._stretch_moments(bot, ctx, [voiced], 300.0, 12.0)
+    assert 49 <= edited(voiced) < 55

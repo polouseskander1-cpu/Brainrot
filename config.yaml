@@ -123,6 +123,22 @@ versions:
   x: ''                 # '' = no version of its own: X and Pinterest get the longest one
   pinterest: ''
 
+commentary:
+  # A voiceover with your take on each clip, so reposted clips add something original (YouTube, TikTok and
+  # Facebook don't pay for reposts without it). The clip pauses while the voice speaks, with its own captions.
+  # Your own words win: record <clip>.intro.mp3 / <clip>.outro.mp3 next to a clip, or write them in
+  # <clip>.commentary.txt ("intro: ..." and "outro: ..." lines). Otherwise the AI helper writes a take.
+  enabled: true
+  intro: true           # a short line before the clip that sets it up
+  outro: true           # your take after the clip: context or a counterpoint, and a question for the comments
+  voice: norman         # norman, john, bryce (male), kristin (female): natural voices, downloaded once (about 85 MB)
+                        # system = the computer's own voice | any Piper voice name, e.g. en_GB-alan-medium
+                        # (list: huggingface.co/rhasspy/piper-voices - check its license before earning with it)
+  speed: 1.1            # how fast the voice talks (1 = normal)
+  persona: ''           # who you are / your angle, so the AI's takes sound like you, e.g. "a skeptical engineer"
+  max_seconds: 20       # at most this much AI voiceover per reel
+  caption_color: "#7FDBFF"  # the voiceover's captions, so viewers can tell it apart from the clip
+
 links:
   # Put video links (YouTube, TikTok, Instagram, X...) in a links.txt file inside a clips folder, one per line,
   # or add them from the menu. Each video is downloaded into that folder and becomes reels like any clip.

@@ -59,6 +59,22 @@ def _editing():
     return f"{len(EMOJI_WORDS)} emojis, face model, sound effects"
 
 
+def _voice():
+    """The voiceover: which voice runs here, and (in the Windows app) the C++ runtime that piper.exe needs."""
+    from .commentary import align_words
+    from .voice import WINDOWS_RUNTIME, piper_build
+
+    build = piper_build()
+    if os.name == "nt":
+        assert build == "windows-amd64", f"unexpected voice build {build!r}"
+        if FROZEN:
+            bundled = {p.name.lower() for p in Path(getattr(sys, "_MEIPASS", ".")).glob("*.dll")}
+            missing = [name for name in WINDOWS_RUNTIME if name not in bundled]
+            assert not missing, f"C++ runtime missing from the app: {missing}"
+    assert [w.text for w in align_words("Two words.", [], 1.0)] == ["Two", "words."]
+    return f"natural voice ({build}), downloaded on first use" if build else "the computer's own voice"
+
+
 def _app_parts():
     """The phone dashboard (a real local server), its QR code, the tray icon picture and the update check code."""
     import json
@@ -158,6 +174,7 @@ def run() -> int:
         _check("ffmpeg with captions + x264", _tools),
         _check("speech-to-text engine", _speech_engine),
         _check("editing (emojis, faces, sounds)", _editing),
+        _check("voiceover", _voice),
         _check("phone dashboard, QR, tray, updates", _app_parts),
         _check("credential storage", _credentials),
         _check("start at login", _autostart),

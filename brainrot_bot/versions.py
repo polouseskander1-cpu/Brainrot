@@ -52,14 +52,15 @@ def ranges(cfg: SimpleNamespace) -> dict[str, tuple[float, float]]:
     return found
 
 
-def moment_range(cfg: SimpleNamespace) -> tuple[float, float]:
-    """How long the best moments of a long video should be: long enough for the longest version."""
+def moment_range(cfg: SimpleNamespace, voiceover: float = 0.0) -> tuple[float, float]:
+    """How long the best moments of a long video should be: long enough for the longest version.
+    voiceover: seconds the commentary adds to each reel (the moment itself can be that much shorter)."""
     m = cfg.moments
     r = ranges(cfg)
     if not r:
         return m.min_seconds, m.max_seconds
-    longest_min = max(lo for lo, _ in r.values())
-    longest_max = max(hi for _, hi in r.values())
+    longest_min = max(lo for lo, _ in r.values()) - voiceover
+    longest_max = max(hi for _, hi in r.values()) - voiceover
     # A little extra so the version still makes it after pauses are cut.
     return max(m.min_seconds, min(longest_min * 1.08, longest_max - 5)), max(m.max_seconds, longest_max)
 

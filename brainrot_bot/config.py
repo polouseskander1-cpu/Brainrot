@@ -157,6 +157,16 @@ DEFAULTS: dict[str, Any] = {
         "x": "",
         "pinterest": "",
     },
+    "commentary": {
+        "enabled": True,
+        "intro": True,
+        "outro": True,
+        "voice": "norman",
+        "speed": 1.1,
+        "persona": "",
+        "max_seconds": 20,
+        "caption_color": "#7FDBFF",
+    },
     "links": {
         "enabled": True,
         "max_height": 1080,
@@ -413,6 +423,22 @@ def _validate(c: dict) -> None:
         except ValueError as exc:
             raise ConfigError(str(exc)) from None
         v[platform] = "" if v[platform] is None or v[platform] is False else str(v[platform]).strip()
+
+    cm = c["commentary"]
+    for key in ("enabled", "intro", "outro"):
+        cm[key] = bool(cm[key])
+    from .voice import VOICES, valid_voice
+
+    cm["voice"] = str(cm["voice"] or "").strip()
+    if cm["voice"].lower() in (*VOICES, "system"):
+        cm["voice"] = cm["voice"].lower()
+    if not valid_voice(cm["voice"]):
+        raise ConfigError(f"'commentary.voice' must be {', '.join(VOICES)}, system, or a Piper voice name like "
+                          f"en_GB-alan-medium (got {cm['voice']!r})")
+    cm["speed"] = _num("commentary.speed", cm["speed"], 0.5, 2.0)
+    cm["persona"] = " ".join(str(cm["persona"] or "").split())[:500]
+    cm["max_seconds"] = _num("commentary.max_seconds", cm["max_seconds"], 3, 120)
+    cm["caption_color"] = _check_color("commentary.caption_color", cm["caption_color"])
 
     lk = c["links"]
     lk["enabled"] = bool(lk["enabled"])

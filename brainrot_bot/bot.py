@@ -20,11 +20,12 @@ from .ai import AI
 from .analysis import Loudness
 from .cloud import CloudSync
 from .captions import Hook, build_ass, build_srt, group_words, prepare_words, time_groups
+from .commentary import LEAD, TAIL, Commentator, Voiceover
 from .config import APP_DIR, FONTS_DIR, MODELS_DIR, SERVER, STOP_FILE, WORK_DIR
 from .copywriter import merge_hashtags, write_copy
 from .credentials import Credentials
 from .dedupe import Fingerprints, frame_hashes, quick_hash, sound_bits, text_signature
-from .editor import EditPlan, edited_length, plan_edit
+from .editor import EditPlan, add_voiceover, edited_length, plan_edit
 from .faces import find_faces
 from .gpu import setup_codec
 from .gameplay import Footage, list_media, pick_music, plan_segments, scan_library
@@ -40,10 +41,11 @@ from .sfx import write_track
 from .state import State
 from .thumbnail import make_cover
 from .transcribe import Transcriber, Word
-from .translate import SCRIPT_FONTS, base_language, caption_settings, language_name, translate_reel
+from .translate import SCRIPT_FONTS, base_language, caption_settings, language_name, translate_reel, translated_words
 from .uploads import PostInfo, UploadQueue, pretty_title
 from .versions import FOLDERS, WHY, Cut, moment_range, plan_cuts
 from .versions import ranges as version_ranges
+from .voice import Voice
 
 log = logging.getLogger("brainrot")
 
@@ -63,6 +65,7 @@ class Piece:
     label: str = ""  # shown under the hook: PART 2/3
     hook: str = ""  # hook written when the moment was picked
     title_suffix: str = ""  # added to the post title: (Part 2/3)
+    stop: float = 0.0  # moments: how far it may be stretched (where the next moment starts)
 
 
 @dataclass
@@ -77,6 +80,7 @@ class Rendered:
     platforms: list[str] = field(default_factory=list)  # the platforms this version is for (versions on)
     group: str = ""  # versions of the same reel share this
     files: dict[str, Path] = field(default_factory=dict)  # platform -> its copy in Reels/<Platform>/
+    note: str = ""  # what the voiceover says (shown on the phone)
 
     @property
     def title(self) -> str:
@@ -104,6 +108,7 @@ class _Clip:
     file_hook: str  # from title.txt etc.
     folder: str  # the clip's folder (the podcast / influencer name)
     signatures: list[tuple[str, list[int]]] = field(default_factory=list)
+    voice_told: bool = False  # "no voiceover because..." was logged
 
 
 class Duplicate(Exception):
@@ -185,6 +190,8 @@ class Bot:
         self.stop_event = threading.Event()
         self.credentials = Credentials(cfg.paths.credentials)
         self.ai = AI(cfg, self.credentials)
+        self.voice = Voice(cfg.commentary.voice, cfg.commentary.speed, tools, MODELS_DIR, self.should_stop)
+        self.commentator = Commentator(cfg, tools, self.ai, self.voice, self._hear, self.should_stop)
         # Test renders (--clip) are never posted, and don't download links.
         self.uploads = UploadQueue(cfg, self.state, self.credentials, self._save) if persist else None
         if self.uploads is not None:
@@ -535,7 +542,7 @@ class Bot:
                              " (waiting for your OK on the phone)" if self.uploads.approval_needed() else "")
                 if self.phone is not None:
                     self.phone.reel_ready(main.video, main.cover, main.post.title, folder, main.post.duration, platforms,
-                                          self.uploads.approval_needed() and bool(platforms))
+                                          self.uploads.approval_needed() and bool(platforms), main.note)
         for name in ("error", "next_try", "same_as"):
             entry.pop(name, None)
         self.state.clips[key] = entry
@@ -665,7 +672,8 @@ class Bot:
         m = self.cfg.moments
         if m.enabled and duration >= m.min_source_minutes * 60 and ctx.words:
             count = auto_count(duration, m.count, m.max_count)
-            min_s, max_s = moment_range(self.cfg)
+            voiceover = self.commentator.expected(ctx.path)  # the voiceover makes each reel this much longer
+            min_s, max_s = moment_range(self.cfg, voiceover)
             moments = None
             if self.cfg.ai.moments and self.ai.available:
                 sentences = split_sentences(ctx.words)
@@ -676,10 +684,12 @@ class Bot:
                     moments = moments_from_picks(picks, sentences, duration, count, min_s, max_s)
             if not moments:
                 moments = find_moments(ctx.words, duration, count, min_s, max_s, ctx.loudness)
-            self._stretch_moments(ctx, moments, duration)
+            self._stretch_moments(ctx, moments, duration, voiceover)
             log.info("Long video: making %d reel(s) from its best moments: %s", len(moments),
                      ", ".join(f"{int(x.start // 60)}:{int(x.start % 60):02d}" for x in moments))
-            return [Piece(x.start, x.end, f"_moment{i}", hook=x.hook) for i, x in enumerate(moments, 1)]
+            starts = sorted(x.start for x in moments)
+            return [Piece(x.start, x.end, f"_moment{i}", hook=x.hook, stop=next((s for s in starts if s > x.start), duration))
+                    for i, x in enumerate(moments, 1)]
 
         parts = plan_parts(duration, ctx.words, self.cfg.parts.max_seconds)
         n = len(parts)
@@ -688,30 +698,34 @@ class Bot:
             for i, (start, end) in enumerate(parts, 1)
         ]
 
-    def _stretch_moments(self, ctx: _Clip, moments: list, duration: float) -> None:
+    def _stretch_moments(self, ctx: _Clip, moments: list, duration: float, extra: float = 0.0) -> None:
         """Pauses get cut, so a moment can end up shorter than the longest version needs (TikTok: 1 minute).
-        Add the sentences that follow until it's long enough, without running into the next moment."""
-        targets = version_ranges(self.cfg)
-        if not targets or not ctx.words:
-            return
-        need = max(lo for lo, _ in targets.values())
-        limit = max(hi for lo, hi in targets.values() if lo == need)
-        fps = ctx.layout.fps
-        sentences = split_sentences(ctx.words)
+        Add the sentences that follow until it's long enough, without running into the next moment.
+        extra: seconds the voiceover adds to the reel."""
         starts = sorted(m.start for m in moments)
         for m in moments:
-            if edited_length(self.cfg, fps, m.start, m.end, ctx.words, ctx.loudness) >= need:
+            m.end = self._stretch(ctx, m.start, m.end, next((s for s in starts if s > m.start), duration), extra)
+
+    def _stretch(self, ctx: _Clip, start: float, end: float, stop: float, extra: float) -> float:
+        """The new end of start-end, so its longest version (with the voiceover) is long enough."""
+        targets = version_ranges(self.cfg)
+        if not targets or not ctx.words:
+            return end
+        top = max(lo for lo, _ in targets.values())
+        need, limit = top - extra, max(hi for lo, hi in targets.values() if lo == top) - extra
+        fps = ctx.layout.fps
+        if edited_length(self.cfg, fps, start, end, ctx.words, ctx.loudness) >= need:
+            return end
+        for s in split_sentences(ctx.words):
+            if s.start < end - 0.5:
                 continue
-            stop = next((s for s in starts if s > m.start), duration)
-            for s in sentences:
-                if s.start < m.end - 0.5:
-                    continue
-                end = min(duration, s.end + 0.4)
-                if end > stop - 1 or edited_length(self.cfg, fps, m.start, end, ctx.words, ctx.loudness) > limit:
-                    break
-                m.end = end
-                if edited_length(self.cfg, fps, m.start, end, ctx.words, ctx.loudness) >= need:
-                    break
+            new_end = min(stop, s.end + 0.4)
+            if new_end > stop - 1 or edited_length(self.cfg, fps, start, new_end, ctx.words, ctx.loudness) > limit:
+                break
+            end = new_end
+            if edited_length(self.cfg, fps, start, end, ctx.words, ctx.loudness) >= need:
+                break
+        return end
 
     def _make_piece(self, ctx: _Clip, piece: Piece, index: int) -> list[Rendered]:
         cfg = self.cfg
@@ -736,15 +750,20 @@ class Bot:
         # Most specific first: platforms that allow only a few hashtags (Instagram: 5, X: 2) keep these.
         hashtags = merge_hashtags(folder_hashtags(ctx.path), text.hashtags, cfg.upload.hashtags)
 
-        cuts = self._plan_cuts(ctx, piece)
+        voiceover = self._voiceover(ctx, piece, words, index)
+        extra = voiceover.added(ctx.layout.fps) if voiceover else 0.0
+        if piece.stop:  # moments were picked with room for a voiceover: stretch if it came out shorter (or not at all)
+            piece.end = self._stretch(ctx, piece.start, piece.end, piece.stop, extra)
+        cuts = self._plan_cuts(ctx, piece, extra)
         results = []
         spoken = base_language(ctx.language or cfg.captions.language)
         for n, cut in enumerate(cuts):
             tag = f"{index}" if len(cuts) == 1 else f"{index}{chr(97 + n)}"
             part = replace(piece, start=cut.start, end=cut.end)
-            item, job, plan, clean = self._render_part(ctx, part, tag, hook, title, cut.platforms)
+            item, job, plan, clean = self._render_part(ctx, part, tag, hook, title, cut.platforms, voiceover)
             item.post = PostInfo(title, hashtags, plan.duration, description)
             item.platforms, item.group = list(cut.platforms), piece.suffix or "reel"
+            item.note = voiceover.summary() if voiceover else ""
             results.append(item)
             for lang in cfg.captions.translate_to:
                 if base_language(lang) == spoken:
@@ -755,10 +774,43 @@ class Bot:
                     results.append(translated)
         return results
 
-    def _plan_cuts(self, ctx: _Clip, piece: Piece) -> list[Cut]:
-        """The versions to render: which part of the piece each platform gets (versions off: all of it)."""
-        targets = version_ranges(self.cfg)
-        if not targets:
+    def _hear(self, audio: Path) -> list[Word]:
+        """Word timings of the voiceover (for its captions)."""
+        if self.transcriber is None:
+            return []
+        return self.transcriber.transcribe(audio, self.should_stop, quiet=True)
+
+    def _voiceover(self, ctx: _Clip, piece: Piece, words: list[Word], index: int) -> Voiceover | None:
+        """The commentary said around this reel (the same for each platform's version), or None."""
+        if not self.cfg.commentary.enabled:
+            return None
+        source = f' called "{pretty_title(ctx.path.stem)}"' + (f' (from "{ctx.folder}")' if ctx.folder else "")
+        language = base_language(ctx.language or self.cfg.captions.language)
+        try:
+            voiceover = self.commentator.make(ctx.path, words, "" if language == "auto" else language, source,
+                                              ctx.job_dir, str(index))
+        except StopRequested:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the reel is still made, without the voiceover
+            log.warning("No voiceover for this reel: %s", exc)
+            return None
+        if voiceover is None and not ctx.voice_told:
+            ctx.voice_told = True
+            if not self.ai.available:
+                log.info("No voiceover: it's written by the AI helper (menu > AI), or put your own words in %s",
+                         ctx.path.with_name(ctx.path.stem + ".commentary.txt").name)
+        return voiceover
+
+    def _plan_cuts(self, ctx: _Clip, piece: Piece, extra: float = 0.0) -> list[Cut]:
+        """The versions to render: which part of the piece each platform gets (versions off: all of it).
+        extra: seconds the voiceover adds, so the clip's part is that much shorter."""
+        allowed = version_ranges(self.cfg)
+        if not allowed:
+            return [Cut(piece.start, piece.end, piece.end - piece.start)]
+        targets = {p: (max(1.0, lo - extra), hi - extra) for p, (lo, hi) in allowed.items() if hi - extra >= 3}
+        for platform in allowed.keys() - targets.keys():
+            log.info("No %s version of this reel: the voiceover alone is %.0fs.", FOLDERS[platform], extra)
+        if not targets:  # e.g. a very long recording of yours: one reel, in Reels/<podcast>/
             return [Cut(piece.start, piece.end, piece.end - piece.start)]
         fps = ctx.layout.fps
         cuts, left_out = plan_cuts(
@@ -767,8 +819,9 @@ class Bot:
             lambda a, b, lo, hi: self._best_windows(ctx, a, b, lo, hi),
         )
         for platform, length in left_out.items():
-            reason = WHY.get(platform, "no part of it fits " + "-".join(f"{x:g}" for x in targets[platform]) + " seconds")
-            log.info("No %s version of this reel: it's %.0fs long (%s).", FOLDERS[platform], length, reason)
+            reason = WHY.get(platform, "no part of it fits " + "-".join(f"{x:g}" for x in allowed[platform]) + " seconds")
+            log.info("No %s version of this reel: it's %.0fs long%s (%s).", FOLDERS[platform], length + extra,
+                     " with the voiceover" if extra else "", reason)
         return cuts
 
     def _best_windows(self, ctx: _Clip, a: float, b: float, lo: float, hi: float) -> list[tuple[float, float]]:
@@ -792,12 +845,7 @@ class Bot:
         at = plan.cover_at
         fps = job.layout.fps
         # Which moment of the clip, and of the gameplay, is on screen at that time.
-        offset, source = 0.0, job.kept()[0][0]
-        for a, b in job.kept():
-            if at < offset + (b - a):
-                source = a + (at - offset)
-                break
-            offset += b - a
+        source = job.source_time(at)
         segments, elapsed = [], 0.0
         for seg in job.segments:
             if at < elapsed + seg.duration:
@@ -807,7 +855,7 @@ class Bot:
         if job.segments and not segments:
             segments = [job.segments[-1]]
         still = copy.deepcopy(job)
-        still.intervals = [(source, source + 2 / fps)]
+        still.intervals, still.inserts = [(source, source + 2 / fps)], []
         still.segments, still.output, still.ass_file = segments, out, None
         still.emojis, still.sfx_track, still.music, still.mute = [], None, None, []
         still.clip_has_audio = False  # a picture needs no sound (and 2 frames of silence upset loudnorm)
@@ -834,7 +882,7 @@ class Bot:
             return None
         path.write_text(
             build_ass(chunks, width=layout.width, height=layout.height, duration=length, captions=style,
-                      hook_cfg=hook_cfg or self.cfg.hook, hook=hook),
+                      hook_cfg=hook_cfg or self.cfg.hook, hook=hook, voice_color=self.cfg.commentary.caption_color),
             encoding="utf-8",
         )
         return path.relative_to(APP_DIR).as_posix()
@@ -853,7 +901,8 @@ class Bot:
             log.warning("Couldn't make the cover picture: %s", exc)
             return None
 
-    def _render_part(self, ctx: _Clip, piece: Piece, index: int | str, hook_text: str, title: str, platforms: list[str] | None = None):
+    def _render_part(self, ctx: _Clip, piece: Piece, index: int | str, hook_text: str, title: str,
+                     platforms: list[str] | None = None, voiceover: Voiceover | None = None):
         cfg = self.cfg
         edit = cfg.edit
         layout = ctx.layout
@@ -861,6 +910,8 @@ class Bot:
         if edit.face_tracking and (edit.zoom or layout.mode == "fullscreen"):
             faces = find_faces(self.tools, ctx.path, piece.start, piece.end - piece.start)
         plan = plan_edit(cfg, layout, piece.start, piece.end, ctx.words, ctx.loudness, faces)
+        if voiceover is not None:
+            add_voiceover(cfg, plan, voiceover.lines, layout.fps, LEAD, TAIL)
         length = plan.duration
         segments = (
             plan_segments(ctx.gameplay, length, self.state.usage, self.rng, cfg.gameplay.skip_start, cfg.gameplay.skip_end)
@@ -892,8 +943,9 @@ class Bot:
             emoji_size=emoji_size,
             mute=plan.mutes,
             duck_music=cfg.audio.music_duck,
-            normalize=ctx.loudness is None or not ctx.loudness.levels
+            normalize=ctx.loudness is None or not ctx.loudness.levels or bool(plan.inserts)
             or max(ctx.loudness.level(a, b) for a, b in plan.intervals) > 1e-4,
+            inserts=plan.inserts,
         )
         if plan.sounds:
             job.sfx_track = write_track(plan.sounds, length, ctx.job_dir / f"sfx{index}.wav", edit.sfx_volume)
@@ -905,10 +957,12 @@ class Bot:
         if platforms:
             what += " for " + ", ".join(FOLDERS[p] for p in platforms)
         pieces = ", ".join(f"{s.key} @{s.start:.0f}s" for s in segments) or "none (full-screen clip)"
-        cut = piece.end - piece.start - length
+        voiced = sum(i.length for i in plan.inserts)
+        cut = piece.end - piece.start - (length - voiced)
         log.info(
-            "Rendering%s (%.1fs%s, %d zooms, %d emojis) with gameplay: %s", what, length,
-            f", {cut:.1f}s of pauses cut" if cut > 0.05 else "", len(plan.zooms), len(plan.emojis), pieces,
+            "Rendering%s (%.1fs%s%s, %d zooms, %d emojis) with gameplay: %s", what, length,
+            f", {cut:.1f}s of pauses cut" if cut > 0.05 else "", f", {voiced:.1f}s of voiceover" if voiced else "",
+            len(plan.zooms), len(plan.emojis), pieces,
         )
         run_ffmpeg(
             self.tools,
@@ -929,7 +983,8 @@ class Bot:
             cover = self._cover(clean, hook_text.splitlines()[0] if hook_text else title, ctx.job_dir / f"part{index}.jpg",
                                 layout, plan.style, job, ctx.job_dir)
         censor = set(edit.censor_words) if edit.censor else None
-        srt = build_srt(plan.words, censor=censor) if cfg.captions.enabled and cfg.captions.save_srt and plan.words else None
+        said = sorted(plan.words + plan.voice_words, key=lambda w: w.start)
+        srt = build_srt(said, censor=censor) if cfg.captions.enabled and cfg.captions.save_srt and said else None
         item = Rendered(job.output, srt, segments, piece.suffix, PostInfo(title, "", length), cover)
         return item, job, plan, clean
 
@@ -942,13 +997,24 @@ class Bot:
         if not self.ai.available:
             log.warning("Captions in %s need the AI (connect a key in the menu); skipping.", language_name(lang))
             return None
-        result = translate_reel(self.ai, plan.words, {"hook": hook_text, "title": post.title, "caption": post.description}, lang)
+        voice = {f"voice{n}": text for n, (text, *_) in enumerate(plan.voice_lines)}
+        result = translate_reel(self.ai, plan.words, {"hook": hook_text, "title": post.title, "caption": post.description, **voice},
+                                lang)
         if result is None:
             return None
         words, extras = result
         style = caption_settings(plan.style, lang)
         prepared = prepare_words(words, style.uppercase, style.remove_punctuation)
         chunks = time_groups(group_words(prepared, style.max_words, style.max_chars), plan.duration)
+        voice_words: list[Word] = []
+        for n, (_, start, end, pause_end) in enumerate(plan.voice_lines):  # the voiceover's captions, translated
+            said = translated_words([(start, end)], [extras.get(f"voice{n}", "")], lang)
+            voice_words += said
+            for chunk in time_groups(group_words(prepare_words(said, style.uppercase, style.remove_punctuation),
+                                                 style.max_words, style.max_chars), pause_end):
+                chunk.voice = True
+                chunks.append(chunk)
+        chunks.sort(key=lambda c: c.start)
         hook_cfg = copy.copy(cfg.hook)
         if base_language(lang) in SCRIPT_FONTS:
             hook_cfg.font = SCRIPT_FONTS[base_language(lang)]
@@ -965,6 +1031,6 @@ class Bot:
         )
         title = extras.get("title", post.title)
         cover = self._cover(clean, hook_t or title, ctx.job_dir / f"part{tag}.jpg", ctx.layout, style, job, ctx.job_dir)
-        srt = build_srt(words) if cfg.captions.save_srt else None
+        srt = build_srt(sorted(words + voice_words, key=lambda w: w.start)) if cfg.captions.save_srt else None
         info = PostInfo(title, post.hashtags, post.duration, extras.get("caption", post.description))
         return Rendered(translated.output, srt, job.segments, f"{piece.suffix}_{lang}", info, cover, language=lang)

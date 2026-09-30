@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(TOOLS is None or "ass" not in TOOLS.filters, rea
 # Pause cutting is switched off here so the reel is exactly as long as the clip; it has its own test below.
 BASE_CONFIG = (
     "watch:\n  settle_seconds: 0\n  max_attempts: 1\nvideo:\n  width: 360\n  height: 640\n  preset: ultrafast\n"
-    "versions:\n  enabled: false\ncaptions:\n  font_size: 40\nedit:\n  cut_silences: false\n"
+    "versions:\n  enabled: false\ncommentary:\n  enabled: false\ncaptions:\n  font_size: 40\nedit:\n  cut_silences: false\n"
 )
 
 
@@ -48,7 +48,7 @@ class FakeTranscriber:
     def load(self):
         pass
 
-    def transcribe(self, wav, should_stop=None):
+    def transcribe(self, wav, should_stop=None, quiet=False):
         assert wav.exists()
         self.calls += 1
         return list(self.words)
@@ -57,14 +57,19 @@ class FakeTranscriber:
 SPEECH = [Word("Hello", 0.2, 0.6), Word("there,", 0.7, 1.1), Word("friend.", 1.3, 1.8), Word("Listen", 3.0, 3.3), Word("up", 3.4, 3.8)]
 
 
-@pytest.fixture
-def workspace(tmp_path):
+def make_workspace(tmp_path):
+    """A 4.3 s clip with a title in clips/show, 20 s of gameplay, and the test settings."""
     make_clip(tmp_path / "clips" / "show" / "ep1.mp4", 4.3)
     (tmp_path / "clips" / "show" / "title.txt").write_text("Test title", encoding="utf-8")
     (tmp_path / "gameplay").mkdir()
     ffmpeg("-f", "lavfi", "-i", "testsrc=s=320x180:r=30", "-t", "20", "-c:v", "libx264", "-preset", "ultrafast", str(tmp_path / "gameplay" / "run.mp4"))
     (tmp_path / "config.yaml").write_text(BASE_CONFIG, encoding="utf-8")
     return tmp_path
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    return make_workspace(tmp_path)
 
 
 def new_bot(workspace, words=SPEECH):

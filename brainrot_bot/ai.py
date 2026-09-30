@@ -1,5 +1,5 @@
 """Optional help from Claude (Anthropic API): picking the best moments of long videos, writing the
-on-screen hook, the post title / caption / hashtags, and translating captions.
+on-screen hook, the post title / caption / hashtags and the voiceover's take, and translating captions.
 
 It is only used when an API key is connected (menu > AI). Without one, or if a request fails, the bot
 falls back to its built-in rules, so reels never wait for the AI.
@@ -110,6 +110,44 @@ Write, in the language of the transcript:
 - hashtags: 3 to 6 hashtags about this clip's topic, without the # sign and without spaces.
 
 Stay true to what is actually said in the clip."""
+
+COMMENTARY_SCHEMA = {
+    "type": "object",
+    "properties": {"intro": {"type": "string"}, "outro": {"type": "string"}},
+    "required": ["intro", "outro"],
+    "additionalProperties": False,
+}
+
+COMMENTARY_SYSTEM = (
+    "You are the voice of a channel that posts short clips from podcasts with your own commentary around them. "
+    "Your commentary adds what the clip doesn't say: context, a fact, a counterpoint, or what it means for the viewer. "
+    "You write for the ear: short, natural sentences that sound good read aloud."
+)
+
+COMMENTARY_PROMPT = """Transcript of a {length:.0f}-second clip{source}:
+
+<transcript>
+{transcript}
+</transcript>
+
+The clip will be posted with your voice {where}; the clip plays in between.{persona}
+
+Write, in {language}:
+{asks}
+
+Rules:
+- Add something new. Don't repeat or summarize what the speaker says: the viewer hears it anyway.
+- Be accurate. Only state a fact if you're sure it's true; otherwise give your opinion and say it as an opinion.
+- Talk about the clip's main point rather than a detail from one sentence: your words may also be used around a shorter part of the clip.
+- Don't name the speaker unless the transcript makes clear who it is.
+- Plain spoken words only: no hashtags, emojis, stage directions, quotation marks or brackets."""
+
+COMMENTARY_ASKS = {
+    "intro": "- intro: one short line said before the clip (at most 12 words) that makes people want to watch it: the question it "
+             "answers, or why it matters. Don't give away the payoff, and don't start with \"In this clip\" or \"Watch this\".",
+    "outro": "- outro: your take, said after the clip (2 or 3 short sentences, at most 40 words): add context, a fact, a counterpoint "
+             "or what it means for the viewer, then end with a short question that invites comments.",
+}
 
 TRANSLATE_SYSTEM = "You translate subtitles for short vertical videos."
 
@@ -273,6 +311,25 @@ class AI:
             "caption": str(data.get("caption", "")).strip()[:1000],
             "hashtags": [str(tag) for tag in data.get("hashtags", []) if str(tag).strip()][:8],
         }
+
+    def write_commentary(self, transcript: str, length: float, source: str, language: str, persona: str,
+                         intro: bool, outro: bool) -> dict | None:
+        """{"intro": ..., "outro": ...}: a voiceover with a take of its own, to say around the clip."""
+        where = "before and after it" if intro and outro else "before it" if intro else "after it"
+        asks = "\n".join(COMMENTARY_ASKS[key] if wanted else f"- {key}: leave it empty."
+                         for key, wanted in (("intro", intro), ("outro", outro)))
+        about = f"\n\nAbout you (let it shape your take): {persona.strip()}" if persona.strip() else ""
+        data = self.ask(
+            COMMENTARY_SYSTEM,
+            COMMENTARY_PROMPT.format(transcript=transcript, length=length, source=source, where=where, persona=about,
+                                     language=language, asks=asks),
+            COMMENTARY_SCHEMA,
+            effort="medium",
+            what="Writing the voiceover with AI",
+        )
+        if not data:
+            return None
+        return {key: " ".join(str(data.get(key, "")).split())[:600] for key in ("intro", "outro")}
 
     def translate(self, lines: list[str], language: str) -> list[str] | None:
         numbered = "\n".join(f"[{n}] {text}" for n, text in enumerate(lines))

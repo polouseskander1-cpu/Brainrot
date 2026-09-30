@@ -41,3 +41,11 @@ tqdm - MPL-2.0 / MIT License
 
 The Whisper speech-recognition models are downloaded on first use (not included); they are
 released under the MIT License by OpenAI, converted by SYSTRAN.
+
+The voiceover's voice is downloaded on first use (not included), into the "models" folder:
+  Piper (models/piper) - MIT License, https://github.com/rhasspy/piper (release 2023.11.14-2). It comes
+  with espeak-ng, GNU General Public License v3 or later (source: https://github.com/espeak-ng/espeak-ng),
+  and ONNX Runtime (MIT License). Piper runs as its own program (piper.exe); the bot only starts it.
+  The voices (models/voices) - https://huggingface.co/rhasspy/piper-voices, MIT License. Norman, John and
+  Kristin were trained on public-domain LibriVox recordings, Bryce on recordings the speaker released into
+  the public domain (see each voice's MODEL_CARD there).

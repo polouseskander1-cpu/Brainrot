@@ -429,6 +429,8 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
             ("A version for each platform", on(cfg.versions.enabled) + (" (" + ", ".join(
                 f"{FOLDERS[p]} {lo:g}-{hi:g}s" for p, (lo, hi) in version_ranges(cfg).items()) + ")" if cfg.versions.enabled else "")),
             ("Reels per long video (podcast episode)", str(cfg.moments.count) if cfg.moments.count else "automatic, about 1 per 20 minutes"),
+            ("Commentary voiceover (your take, so clips count as original)",
+             on(cfg.commentary.enabled) + (f" (voice: {cfg.commentary.voice})" if cfg.commentary.enabled else "")),
         ]
         for number, (name, value) in enumerate(items, 1):
             ui.say(f"  {ui.yellow(str(number))}) {name}: {value}")
@@ -471,12 +473,43 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
             picked = ui.choose(["Graphics card if it works, otherwise the processor (auto)", "Always the processor (libx264)"],
                                default=1 if cfg.video.codec == "auto" else 2)
             update_config_file(config_path, {"video": {"codec": "auto" if picked == 1 else "libx264"}})
+        elif choice == "14":
+            choose_commentary(cfg, config_path)
         elif choice == "13":
             ui.say("How many reels from each long video (5 minutes or longer)? 0 = automatic (about one per 20 minutes,")
             ui.say("so 6 from a 2-hour episode). The bot always takes the strongest moments.")
             answer = ui.ask("Reels", str(cfg.moments.count))
             if answer.isdigit() and int(answer) <= 50:
                 update_config_file(config_path, {"moments": {"count": int(answer)}})
+
+
+def choose_commentary(cfg: SimpleNamespace, config_path: Path) -> None:
+    """Menu: the voiceover said around each clip (commentary: in config.yaml)."""
+    from .voice import DESCRIPTIONS, VOICES
+
+    c = cfg.commentary
+    ui.say("A voiceover with a take on each clip - a line before it and your take after it - so reposted clips add")
+    ui.say("something original. The AI helper writes it, unless you do: put your words in <clip>.commentary.txt, or")
+    ui.say("record yourself as <clip>.outro.mp3 (and <clip>.intro.mp3) next to the clip.")
+    options = ["Turn it off" if c.enabled else "Turn it on", f"Voice: {c.voice}", f"Your angle: {c.persona or 'not set'}",
+               f"A line before the clip: {'on' if c.intro else 'off'}", f"Your take after the clip: {'on' if c.outro else 'off'}",
+               "Back"]
+    picked = ui.choose(options, default=len(options))
+    if picked == 1:
+        update_config_file(config_path, {"commentary": {"enabled": not c.enabled}})
+    elif picked == 2:
+        names = [*VOICES, "system"]
+        voice = names[ui.choose([f"{name.title()} ({DESCRIPTIONS[name]})" for name in names],
+                                default=names.index(c.voice) + 1 if c.voice in names else 1) - 1]
+        update_config_file(config_path, {"commentary": {"voice": voice}})
+    elif picked == 3:
+        ui.say('Who you are, or your angle, so the takes sound like you: e.g. "a skeptical engineer who loves space".')
+        ui.say("Enter keeps it, a dash (-) clears it.")
+        answer = ui.ask("Your angle", c.persona)
+        update_config_file(config_path, {"commentary": {"persona": "" if answer.strip() == "-" else answer.strip()}})
+    elif picked in (4, 5):
+        key = "intro" if picked == 4 else "outro"
+        update_config_file(config_path, {"commentary": {key: not getattr(c, key)}})
 
 
 def add_video_link(cfg: SimpleNamespace) -> None:

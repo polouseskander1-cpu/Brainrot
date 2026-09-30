@@ -120,6 +120,16 @@ class EmojiShow:
 
 
 @dataclass
+class Insert:
+    """A pause in the clip for a voiceover line: the picture holds still while the voice plays."""
+
+    before: int  # the kept part it comes before (the number of kept parts = after the last one)
+    length: float  # seconds, a whole number of frames
+    audio: Path | None = None  # the voice (48 kHz WAV)
+    lead: float = 0.0  # silence before the voice starts
+
+
+@dataclass
 class RenderJob:
     clip: Path
     clip_start: float
@@ -147,9 +157,39 @@ class RenderJob:
     mute: list[tuple[float, float]] = field(default_factory=list)  # reel times where the voice is silenced
     duck_music: bool = True
     normalize: bool = True  # False for silent sound (loudness normalization would divide by zero)
+    inserts: list[Insert] = field(default_factory=list)  # voiceover pauses
 
     def kept(self) -> list[tuple[float, float]]:
         return self.intervals or [(self.clip_start, self.clip_start + self.duration)]
+
+    def total(self) -> float:
+        """The reel's length: the kept parts of the clip and the voiceover pauses."""
+        return sum(b - a for a, b in self.kept()) + sum(i.length for i in self.inserts)
+
+    def order(self) -> list[tuple[str, int]]:
+        """The reel from start to end: ("part", i) for kept part i, ("pause", k) for inserts[k]."""
+        count = len(self.kept())
+        order: list[tuple[str, int]] = []
+        for i in range(count + 1):
+            order += [("pause", k) for k, ins in enumerate(self.inserts) if ins.before == i]
+            if i < count:
+                order.append(("part", i))
+        return order
+
+    def still_at(self, ins: Insert) -> float:
+        """The moment of the clip shown during a pause: where it continues, or its last picture."""
+        kept = self.kept()
+        return kept[ins.before][0] if ins.before < len(kept) else kept[-1][1] - 1 / self.layout.fps
+
+    def source_time(self, t: float) -> float:
+        """The moment of the clip on screen at time t of the reel."""
+        kept, elapsed = self.kept(), 0.0
+        for kind, i in self.order():
+            length = kept[i][1] - kept[i][0] if kind == "part" else self.inserts[i].length
+            if t < elapsed + length:
+                return kept[i][0] + (t - elapsed) if kind == "part" else self.still_at(self.inserts[i])
+            elapsed += length
+        return kept[-1][1] - 1 / self.layout.fps
 
 
 class _Inputs:
@@ -199,6 +239,8 @@ def _clip_filters(job: RenderJob, inputs: _Inputs, graph: list[str]) -> tuple[st
     audio_src = f"[{clip}:a:0]asetpts=PTS-STARTPTS,aresample={AUDIO_RATE}" if job.clip_has_audio else None
 
     hold = "tpad=stop_mode=clone:stop_duration=1"  # never run out of picture before the sound ends
+    if job.inserts:
+        return _with_pauses(job, inputs, graph, frames, samples, video_src, audio_src, hold)
     if len(kept) == 1:
         graph.append(f"{video_src},trim=end_frame={frames[0][1]},setpts=PTS-STARTPTS,{hold}[cv]")
         if audio_src:
@@ -220,6 +262,47 @@ def _clip_filters(job: RenderJob, inputs: _Inputs, graph: list[str]) -> tuple[st
     graph.append("".join(f"[cvt{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[cvj]")
     graph.append(f"[cvj]{hold}[cv]")
     return "[cv]", ""
+
+
+STEREO = f"aformat=sample_fmts=fltp:sample_rates={AUDIO_RATE}:channel_layouts=stereo"
+PAUSED = "eq=saturation=0.7"  # the held picture loses a little color, so the pause reads as a pause
+
+
+def _with_pauses(job: RenderJob, inputs: _Inputs, graph: list[str], frames: list[tuple[int, int]],
+                 samples: list[tuple[int, int]], video_src: str, audio_src: str | None, hold: str) -> tuple[str, str]:
+    """The kept parts with the voiceover pauses in between: the picture holds still while the voice plays."""
+    fps = job.layout.fps
+    order = job.order()
+    parts = [i for kind, i in order if kind == "part"]
+    graph.append(f"{video_src},split={len(order)}" + "".join(f"[cvs{k}]" for k in range(len(order))))
+    if audio_src:
+        graph.append(f"{audio_src},asplit={len(parts)}" + "".join(f"[cas{i}]" for i in parts))
+    joined = []
+    for k, (kind, i) in enumerate(order):
+        if kind == "part":
+            (f0, f1), (s0, s1) = frames[i], samples[i]
+            graph.append(f"[cvs{k}]trim=start_frame={f0}:end_frame={f1},setpts=PTS-STARTPTS[cvt{k}]")
+            if audio_src:
+                graph.append(f"[cas{i}]atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS,{STEREO}[cat{k}]")
+            else:
+                graph.append(f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={s1 - s0},{STEREO}[cat{k}]")
+        else:
+            ins = job.inserts[i]
+            count = max(1, round(ins.length * fps))
+            f = frames[ins.before][0] if ins.before < len(frames) else frames[-1][1] - 1
+            graph.append(f"[cvs{k}]trim=start_frame={f}:end_frame={f + 1},setpts=PTS-STARTPTS,{PAUSED},"
+                         f"tpad=stop_mode=clone:stop={count - 1}[cvt{k}]")
+            length = round(count * AUDIO_RATE / fps)
+            if ins.audio is not None:
+                voice = inputs.add("-i", str(ins.audio))
+                graph.append(f"[{voice}:a:0]aresample={AUDIO_RATE},{STEREO},adelay={round(ins.lead * 1000)}:all=1,apad,"
+                             f"atrim=end_sample={length},asetpts=PTS-STARTPTS[cat{k}]")
+            else:
+                graph.append(f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={length},{STEREO}[cat{k}]")
+        joined.append(f"[cvt{k}][cat{k}]")
+    graph.append("".join(joined) + f"concat=n={len(order)}:v=1:a=1[cvj][ca]")
+    graph.append(f"[cvj]{hold}[cv]")
+    return "[cv]", "[ca]"
 
 
 def _zoom_filters(job: RenderJob, src: str, width: int, height: int, graph: list[str], tag: str) -> str:
@@ -316,7 +399,7 @@ def build_command(job: RenderJob, cfg: SimpleNamespace) -> list[str]:
     L = job.layout
     inputs = _Inputs()
     graph: list[str] = []
-    total = sum(b - a for a, b in job.kept())
+    total = job.total()
     duration = f"{total:.3f}"
 
     video, voice_src = _clip_filters(job, inputs, graph)
@@ -366,7 +449,8 @@ def build_command(job: RenderJob, cfg: SimpleNamespace) -> list[str]:
         idx = inputs.add("-f", "lavfi", "-t", duration, "-i", f"anullsrc=r={AUDIO_RATE}:cl=stereo")
         voice_src = f"[{idx}:a]"
     chain = "anull"
-    if cfg.audio.normalize and job.clip_has_audio and job.normalize:
+    has_sound = job.clip_has_audio or any(ins.audio is not None for ins in job.inserts)
+    if cfg.audio.normalize and has_sound and job.normalize:
         chain = (
             "acompressor=threshold=-24dB:ratio=3:attack=5:release=120:knee=4"
             f",loudnorm=I={cfg.audio.loudness:g}:TP=-1.5:LRA=11,aresample={AUDIO_RATE}"

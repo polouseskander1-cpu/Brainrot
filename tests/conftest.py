@@ -17,6 +17,7 @@ class FakeClaude:
         self.moments: list[dict] | None = None  # what "pick moments" answers (None = the first sentences)
         self.copy = {"hook": "He lost everything in one day", "title": "The day he lost it all",
                      "caption": "Would you have made the same choice?", "hashtags": ["money", "story"]}
+        self.commentary = {"intro": "Here is why this matters.", "outro": "Honestly, I think he is right. Would you do the same?"}
         self.prefix = "ES:"
         self.status = 200  # e.g. 401 to test a refused key
         self.stop_reason = "end_turn"
@@ -33,6 +34,8 @@ class FakeClaude:
                                  "score": 8, "why": "test"}]}
         if system == ai_module.COPY_SYSTEM:
             return self.copy
+        if system == ai_module.COMMENTARY_SYSTEM:
+            return self.commentary
         if system == ai_module.TRANSLATE_SYSTEM:
             lines = re.findall(r"^\[(\d+)\] (.*)$", prompt.split("<lines>")[1], re.M)
             return {"lines": [{"n": int(n), "text": f"{self.prefix} {text}"} for n, text in lines]}

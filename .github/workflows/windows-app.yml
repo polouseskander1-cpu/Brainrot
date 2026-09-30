@@ -31,6 +31,8 @@ jobs:
           pip install -r requirements.txt pytest Pillow
       - name: Run the tests on Linux
         run: python -m pytest -q
+      - name: The real voice (downloads it and speaks a line)
+        run: BRAINROT_NETWORK_TESTS=1 python -m pytest -q tests/test_voice_download.py
       - name: Self-test
         run: python brainrot.py --selftest
 
@@ -55,7 +57,10 @@ jobs:
             -f lavfi -i "testsrc2=s=1280x720:r=30" -f lavfi -i "sine=f=300" -t 6 -c:v libx264 -preset ultrafast -c:a aac "/data/clips/Test Show/clip.mp4"
           docker run --rm -v "$PWD/data:/data" --entrypoint ffmpeg brainrot-bot -hide_banner -loglevel error \
             -f lavfi -i "testsrc=s=1920x1080:r=30" -t 30 -c:v libx264 -preset ultrafast /data/gameplay/run.mp4
-          docker run --rm -v "$PWD/data:/data" brainrot-bot --once
+          # your own words for the voiceover: read by the natural voice (downloaded into data/models the first time)
+          printf 'intro: A quick one.\noutro: Short, but it proves the point. Agree?\n' > "data/clips/Test Show/clip.commentary.txt"
+          docker run --rm -v "$PWD/data:/data" brainrot-bot --once | tee once.log
+          grep -q 'Voiceover (your words, voice: norman' once.log
           # a 6-second clip: versions for YouTube, Instagram and Facebook, none for TikTok (1 minute or longer)
           ls -la data/output/*/"Test Show"
           test -f "data/output/YouTube/Test Show/clip.mp4" && test -f "data/output/Facebook/Test Show/clip.mp4"
@@ -160,9 +165,16 @@ jobs:
           & $exe --config ci/config.yaml --check
           if ($LASTEXITCODE -ne 0) { throw "check failed" }
 
-          Write-Host "== render one clip (downloads the tiny speech model)"
-          & $exe --config ci/config.yaml --clip ci/clip.mp4
+          Write-Host "== render one clip (downloads the tiny speech model, and the voice for the voiceover)"
+          "intro: Here is a fact most people get wrong.`noutro: They also have no fixed collarbone. Did you know that?" | Set-Content -Encoding utf8 ci/clip.commentary.txt
+          & $exe --config ci/config.yaml --clip ci/clip.mp4 | Tee-Object -FilePath ci/clip_log.txt
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path ci/output/YouTube/clip.mp4)) { throw "render failed" }
+          # the voiceover is read by the natural voice (piper.exe, downloaded into models\), not the fallback
+          if (-not (Select-String -Path ci/clip_log.txt -Pattern "Voiceover \(your words, voice: norman" -Quiet)) { throw "no voiceover with the natural voice" }
+          if (-not (Test-Path test_app/models/piper/windows-amd64/piper/piper.exe)) { throw "the voice program wasn't installed" }
+          $clipLength = [double](& test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration -of csv=p=0 ci/clip.mp4)
+          $reelLength = [double](& test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration -of csv=p=0 ci/output/YouTube/clip.mp4)
+          if ($reelLength - $clipLength -lt 3) { throw "the voiceover didn't make the reel longer ($clipLength s -> $reelLength s)" }
           # under a minute: YouTube, Instagram and Facebook versions, no TikTok one (TikTok pays for 1 minute or longer)
           if (-not (Test-Path ci/output/Instagram/clip.mp4) -or (Test-Path ci/output/TikTok/clip.mp4)) { throw "wrong platform versions" }
           & test_app/ffmpeg/ffprobe.exe -v error -show_entries format=duration:stream=width,height -of compact ci/output/YouTube/clip.mp4

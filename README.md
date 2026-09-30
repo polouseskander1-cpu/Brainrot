@@ -77,13 +77,26 @@ is downloaded once. After that, a 1-minute clip takes about 1-2 minutes on a nor
   into that folder. A playlist or channel link takes the newest 5.
 - **Long videos** (whole podcast episodes, 5 minutes or longer): instead of one huge reel, the bot finds
   the **best moments** and makes reels of each: about one per 20 minutes, so **6 from a 2-hour episode**
-  (set your own number in the menu under **Look & features**). Each moment is 1-1.5 minutes, long enough
+  (set your own number in the menu under **Look & features**). Each reel is 1-1.5 minutes, long enough
   for TikTok, and the YouTube version is the strongest part of it. The bot looks for hot takes and
   controversial opinions, mind-blowing facts and sci-fi talk (space, aliens, AI, the future), stories,
   strong openings (a question, a bold claim, a number) and a payoff at the end, and skips intros, ads
   and small talk. With the AI helper, Claude reads the whole transcript and picks them.
 - **Duplicates are skipped**: the same video renamed, copied, re-downloaded or re-encoded (same sound
   or same words) is noticed and not made or posted twice.
+
+**Commentary voiceover**, so reposted clips add something original (YouTube, TikTok and Facebook
+don't pay for plain reposts; see [Getting paid](docs/PLATFORMS.md#getting-paid-what-each-platform-requires)):
+- The clip **pauses** (its picture holds still, the gameplay keeps going) for a short line **before** it that
+  sets it up, and **your take after it**: context or a counterpoint, then a question for the comments.
+  The voiceover gets its own captions, in light blue, so viewers can tell it apart from the clip.
+- **Your own words come first**: record yourself as `<clip>.outro.mp3` (and `<clip>.intro.mp3`) next to
+  the clip, or write your take in `<clip>.commentary.txt` and the voice reads it. Otherwise the **AI
+  helper** writes a take for each reel; tell it your angle in the menu ("a skeptical engineer...").
+- A **natural voice** that runs on your PC (free, offline, about 85 MB downloaded the first time):
+  Norman, John or Bryce (male) or Kristin (female). The reel stays the right length for each platform:
+  the voiceover counts towards TikTok's minute and YouTube's 59 seconds.
+- The phone message for each reel shows what the voiceover says, so you can check it before it's posted.
 
 **Editing**
 - **Gameplay picked at random**, cut to exactly the reel's length. Recordings take turns.
@@ -181,6 +194,9 @@ choose *Stop the bot* then *Start the bot*. Some useful ones:
 | `moments.min_source_minutes` | `5` | Videos at least this long are cut into their best moments. |
 | `moments.count` | `0` | Reels per long video. `0` = about one per 20 minutes (6 from 2 hours). |
 | `versions.tiktok` / `youtube` / ... | `61-90` / `3-59` / ... | Length of each platform's version, in seconds. `versions.enabled: false` = one version in `Reels\<podcast>\`. |
+| `commentary.enabled` | on | The voiceover before and after each clip (needs the AI helper, or your own words or recording). |
+| `commentary.voice` | `norman` | `john`, `bryce`, `kristin`, `system` (the computer's voice) or any [Piper voice](https://huggingface.co/rhasspy/piper-voices). |
+| `commentary.persona` | empty | Your angle, so the AI's takes sound like you. |
 | `upload.post_times` | `auto` | `["12:00", "18:30"]` = only then, `[]` = any time. |
 | `upload.hours_between_posts` | `3` | At least this long between posts on the same account. |
 | `phone.approval` | off | Reels wait for your OK on the phone. |

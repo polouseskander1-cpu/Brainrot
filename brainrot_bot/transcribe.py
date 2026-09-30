@@ -86,10 +86,10 @@ class Transcriber:
                 self.device = "cpu"
                 self._model = self._create("cpu")
 
-    def transcribe(self, audio_path: Path, should_stop: Callable[[], bool] | None = None) -> list[Word]:
+    def transcribe(self, audio_path: Path, should_stop: Callable[[], bool] | None = None, quiet: bool = False) -> list[Word]:
         self.load()
         try:
-            return self._run(audio_path, should_stop)
+            return self._run(audio_path, should_stop, quiet)
         except StopRequested:
             raise
         except Exception as exc:
@@ -99,9 +99,9 @@ class Transcriber:
             log.warning("Speech-to-text failed on the GPU (%s). Retrying on the CPU.", exc)
             self.device = "cpu"
             self._model = self._create("cpu")
-            return self._run(audio_path, should_stop)
+            return self._run(audio_path, should_stop, quiet)
 
-    def _run(self, audio_path: Path, should_stop: Callable[[], bool] | None = None) -> list[Word]:
+    def _run(self, audio_path: Path, should_stop: Callable[[], bool] | None = None, quiet: bool = False) -> list[Word]:
         segments, info = self._model.transcribe(
             str(audio_path),
             language=self.language,
@@ -122,6 +122,8 @@ class Transcriber:
             if total > 1200 and segment.end >= next_report:  # long videos: show progress every 10 minutes
                 log.info("  listened to %d of %d minutes", segment.end // 60, total // 60)
                 next_report += 600
+        if quiet:  # e.g. timing the voiceover's captions: not a clip, so it doesn't count as the clip's language
+            return tidy_words(words)
         self.last_language = getattr(info, "language", None)
         log.info("Heard %d words (language: %s)", len(words), self.last_language or "?")
         return tidy_words(words)

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 
 from .analysis import Loudness, TimeMap, emoji_path, keyword_score, quantize, speech_intervals
 from .captions import Chunk, emoji_events, group_words, prepare_words, time_groups
 from .faces import Face, face_at, track_x
-from .render import EmojiShow, Layout, Zoom
+from .render import EmojiShow, Insert, Layout, Zoom
 from .sfx import SoundEvent
 from .styles import apply_style
 from .transcribe import Word
@@ -30,6 +31,9 @@ class EditPlan:
     mutes: list[tuple[float, float]] = field(default_factory=list)
     reframe: list[tuple[float, float]] = field(default_factory=list)
     cover_at: float = 0.0
+    inserts: list[Insert] = field(default_factory=list)  # voiceover pauses
+    voice_words: list[Word] = field(default_factory=list)  # what the voiceover says (reel time)
+    voice_lines: list[tuple[str, float, float, float]] = field(default_factory=list)  # text, voice start/end, pause end
 
 
 def chunk_score(chunk: Chunk, tmap: TimeMap, loudness: Loudness | None) -> float:
@@ -117,3 +121,47 @@ def plan_edit(
 
     plan.cover_at = plan.zooms[0].start + 0.3 if plan.zooms else tmap.duration * 0.3
     return plan
+
+
+def _shift(plan: EditPlan, by: float) -> None:
+    """Everything that happens in the clip moves `by` seconds later (the intro is said first)."""
+    plan.words = [Word(w.text, w.start + by, w.end + by) for w in plan.words]
+    for chunk in plan.chunks:
+        chunk.start, chunk.end = chunk.start + by, chunk.end + by
+        for w in chunk.words:
+            w.start, w.end = w.start + by, w.end + by
+    plan.zooms = [replace(z, start=z.start + by, end=z.end + by) for z in plan.zooms]
+    plan.emojis = [replace(e, start=e.start + by, end=e.end + by) for e in plan.emojis]
+    plan.sounds = [replace(x, at=x.at + by) for x in plan.sounds]
+    plan.mutes = [(a + by, b + by) for a, b in plan.mutes]
+    plan.reframe = [(t + by, cx) for t, cx in plan.reframe]
+    plan.cover_at += by
+
+
+def add_voiceover(cfg: SimpleNamespace, plan: EditPlan, lines: list, fps: float, lead: float, tail: float) -> None:
+    """Pause the clip for the voiceover: the intro line before it, the outro line after it (lines have
+    .where, .audio, .length and .words). The voice gets its own captions, and a whoosh marks each switch."""
+    pauses = {}
+    for line in lines:  # each pause is a whole number of frames
+        pauses[line.where] = (line, math.ceil((lead + line.length + tail) * fps - 1e-6) / fps)
+    clip_length = plan.duration
+    intro_length = pauses["intro"][1] if "intro" in pauses else 0.0
+    if intro_length:
+        _shift(plan, intro_length)
+    style = plan.style
+    for where, (line, length) in sorted(pauses.items(), key=lambda item: item[0] != "intro"):
+        at = 0.0 if where == "intro" else intro_length + clip_length
+        plan.inserts.append(Insert(0 if where == "intro" else len(plan.intervals), length, line.audio, lead))
+        words = [Word(w.text, at + lead + w.start, min(at + length, at + lead + w.end)) for w in line.words]
+        plan.voice_words += words
+        if words:
+            plan.voice_lines.append((line.text, words[0].start, words[-1].end, at + length))
+        if cfg.captions.enabled and words:
+            prepared = prepare_words(words, style.uppercase, style.remove_punctuation)
+            for chunk in time_groups(group_words(prepared, style.max_words, style.max_chars), at + length):
+                chunk.voice = True
+                plan.chunks.append(chunk)
+        if cfg.edit.sfx:  # a whoosh into the clip after the intro, and out of it before the outro
+            plan.sounds.append(SoundEvent("whoosh", max(0.0, at + length - 0.3) if where == "intro" else max(0.0, at - 0.15)))
+    plan.duration = intro_length + clip_length + (pauses["outro"][1] if "outro" in pauses else 0.0)
+    plan.chunks.sort(key=lambda c: c.start)
