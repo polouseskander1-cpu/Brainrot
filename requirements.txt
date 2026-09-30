@@ -1,4 +1,6 @@
 faster-whisper>=1.1.0
+# PyAV 19 dropped an option faster-whisper 1.2.1 still passes when it opens a sound file.
+av>=11,<19
 PyYAML>=6.0
 # Video links (YouTube, TikTok, Instagram...). "default" adds yt-dlp-ejs, needed for YouTube together with Deno.
 yt-dlp[default]>=2026.8.19

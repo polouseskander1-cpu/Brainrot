@@ -111,3 +111,45 @@ def test_tidy_words_fixes_bad_timings():
         assert w.end > w.start >= 0
     for current, following in zip(fixed, fixed[1:]):
         assert current.start <= following.start
+
+
+def test_the_speech_model_reads_the_bots_own_sound_file_directly(tmp_path):
+    """The 16 kHz mono WAV the bot makes goes to the model as numbers, so a change in how the video library
+    opens files (PyAV 19 did that) can't break listening."""
+    import wave
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from brainrot_bot.transcribe import Transcriber, read_wav16k
+
+    path = tmp_path / "voice.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes((np.sin(np.arange(24000) / 10) * 16000).astype("<i2").tobytes())
+    audio = read_wav16k(path)
+    assert audio.dtype == np.float32 and len(audio) == 24000 and 0.45 < float(abs(audio).max()) <= 0.5
+    other = tmp_path / "other.wav"
+    with wave.open(str(other), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(48000)
+        handle.writeframes(b"\0" * 400)
+    assert read_wav16k(other) is None and read_wav16k(tmp_path / "missing.wav") is None
+
+    given = []
+
+    class Model:
+        def transcribe(self, source, **options):
+            given.append(source)
+            word = SimpleNamespace(word=" Hi.", start=0.1, end=0.4)
+            return [SimpleNamespace(words=[word], end=0.4)], SimpleNamespace(duration=1.5, language="en")
+
+    transcriber = Transcriber("tiny")
+    transcriber._model = Model()
+    assert [w.text for w in transcriber.transcribe(path)] == ["Hi."]
+    assert isinstance(given[0], np.ndarray)  # read here, not opened by the library
+    transcriber.transcribe(other, quiet=True)
+    assert given[1] == str(other)  # any other file: the model opens it itself

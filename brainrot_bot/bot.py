@@ -778,7 +778,10 @@ class Bot:
         """Word timings of the voiceover (for its captions)."""
         if self.transcriber is None:
             return []
-        return self.transcriber.transcribe(audio, self.should_stop, quiet=True)
+        wav = audio.with_name(audio.stem + "_16k.wav")  # what the speech model reads best
+        run_ffmpeg(self.tools, ["-i", str(audio), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)],
+                   log_path=wav.with_suffix(".log"), should_stop=self.should_stop)
+        return self.transcriber.transcribe(wav, self.should_stop, quiet=True)
 
     def _voiceover(self, ctx: _Clip, piece: Piece, words: list[Word], index: int) -> Voiceover | None:
         """The commentary said around this reel (the same for each platform's version), or None."""

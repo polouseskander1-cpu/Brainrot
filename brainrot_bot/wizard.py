@@ -279,8 +279,9 @@ def setup_platforms(cfg: SimpleNamespace, creds: Credentials) -> dict[str, bool]
 def connect_ai(cfg: SimpleNamespace, creds: Credentials) -> bool:
     """Ask for an Anthropic API key. Returns True if one is connected."""
     saved = creds.get(AI_KEY)
-    ui.say("Claude (AI) can pick the best moments of long videos, write the hook, title, caption and")
-    ui.say("hashtags of every reel, and translate captions. Without it the bot uses built-in rules.")
+    ui.say("Claude (AI) can pick the best moments of long videos, write each reel's voiceover (a take of its own,")
+    ui.say("so clips count as original), its hook, title, caption and hashtags, and translate captions.")
+    ui.say("Without it the bot uses built-in rules, and only clips with your own words get a voiceover.")
     ui.say(ui.dim("It uses your own Anthropic API key: you pay Anthropic per use, usually a few cents per reel."))
     if saved:
         choice = ui.choose(["Keep the connected key", "Use a different key", "Disconnect the AI"], default=1)

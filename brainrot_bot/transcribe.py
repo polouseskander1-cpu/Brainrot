@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -45,6 +46,28 @@ def tidy_words(words: list[Word], min_len: float = 0.05) -> list[Word]:
             cleaned[-1].end = max(cleaned[-1].start + min_len, start)
         cleaned.append(Word(text, start, end))
     return cleaned
+
+
+def read_wav16k(path: Path):
+    """The sound of a 16 kHz mono 16-bit WAV (what the bot makes for listening) as floats, or None for any
+    other file. Reading it here keeps the speech model independent of the video library's file opening."""
+    import numpy as np
+
+    try:
+        with wave.open(str(path), "rb") as handle:
+            if (handle.getframerate(), handle.getnchannels(), handle.getsampwidth()) != (16000, 1, 2):
+                return None
+            audio = np.empty(handle.getnframes(), dtype=np.float32)
+            done = 0
+            while done < len(audio):
+                chunk = np.frombuffer(handle.readframes(16000 * 60), dtype="<i2")
+                if not len(chunk):
+                    break
+                audio[done:done + len(chunk)] = chunk / 32768.0
+                done += len(chunk)
+    except (wave.Error, EOFError, OSError):
+        return None
+    return audio[:done]
 
 
 class Transcriber:
@@ -102,8 +125,9 @@ class Transcriber:
             return self._run(audio_path, should_stop, quiet)
 
     def _run(self, audio_path: Path, should_stop: Callable[[], bool] | None = None, quiet: bool = False) -> list[Word]:
+        audio = read_wav16k(audio_path)
         segments, info = self._model.transcribe(
-            str(audio_path),
+            audio if audio is not None else str(audio_path),
             language=self.language,
             word_timestamps=True,
             vad_filter=True,
