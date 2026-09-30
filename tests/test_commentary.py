@@ -3,7 +3,9 @@
 import hashlib
 import io
 import math
+import os
 import tarfile
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -307,6 +309,15 @@ def test_the_computers_voice_steps_in(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(broken, "_piper", lambda *a: (_ for _ in ()).throw(VoiceError("Piper: missing DLL")))
     broken.speak("Hi.", "en", tmp_path / "b.wav")
     assert broken.engine_for("en") == "system" and "couldn't start" in caplog.text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' own voices")
+def test_windows_own_voice_steps_in_for_real(tmp_path):
+    """The fallback when the natural voice can't run: Windows' built-in voice (System.Speech)."""
+    voice = Voice("system", 1.1, TOOLS, tmp_path)
+    out = voice.speak("Would you move to Mars? Tell me in the comments.", "en", tmp_path / "windows.wav")
+    with wave.open(str(out)) as handle:
+        assert handle.getnframes() / handle.getframerate() > 1.0
 
 
 # ------------------------------------------------------------------ whole reels

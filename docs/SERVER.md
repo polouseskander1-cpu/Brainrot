@@ -2,7 +2,7 @@
 
 Instead of a Windows PC, the bot can run on any Linux machine that stays on: a home server, a NAS, a
 Raspberry Pi 4 or 5 (64-bit), or a small cloud server. It runs in Docker, restarts by itself, and keeps
-everything (settings, logins, clips, gameplay, reels, the speech model) in one `data` folder.
+everything (settings, logins, clips, gameplay, reels, the speech model and the voiceover's voice) in one `data` folder.
 
 There's no window and no tray icon on a server. You control it with a few commands, your phone
 ([Telegram or Discord](PHONE.md)) and the phone dashboard.
@@ -10,7 +10,7 @@ There's no window and no tray icon on a server. You control it with a few comman
 ## What you need
 
 - Docker with the compose plugin ([docs.docker.com/engine/install](https://docs.docker.com/engine/install/)).
-- About 2 GB of free memory and 3 GB of disk for the program and the speech model, plus room for videos.
+- About 2 GB of free memory and 3 GB of disk for the program, the speech model and the voice, plus room for videos.
 - A 64-bit system (x86-64 or ARM64). On a Raspberry Pi use the 64-bit Raspberry Pi OS.
 
 Rendering is done by the processor. A 1-minute reel takes a few minutes on a normal server and longer on
