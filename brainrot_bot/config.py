@@ -49,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
         "gameplay": "gameplay",
         "music": "music",
         "output": "output",
+        "stories": "stories",
     },
     "watch": {
         "poll_seconds": 10,
@@ -169,6 +170,28 @@ DEFAULTS: dict[str, Any] = {
         "style": "",
         "gemini_model": "gemini-3.8-flash-tts",
         "elevenlabs_model": "eleven_v4",
+    },
+    "stories": {
+        "enabled": True,
+        "make": "ai",
+        "style": "claymation",
+        "approval": "ai_only",
+        "seconds": 75,
+        "language": "en",
+        "voice": "",
+        "end_question": True,
+        "daily_budget": 10,
+        "per_day": 4,
+        "image_model": "gemini-3.1-flash-image",
+        "video_model": "veo-3.1-fast-generate-preview",
+        "resolution": "720p",
+        "scene_sound": 0.35,
+        "ai_ideas": False,
+        "topics": "mysterious encounters and eerie coincidences, wise little stories with a lesson, small acts of kindness with a twist",
+        "reddit": [],
+        "reddit_every_hours": 6,
+        "reddit_min_upvotes": 300,
+        "reddit_per_check": 1,
     },
     "links": {
         "enabled": True,
@@ -454,6 +477,8 @@ def _validate(c: dict) -> None:
     cm["max_seconds"] = _num("commentary.max_seconds", cm["max_seconds"], 3, 120)
     cm["caption_color"] = _check_color("commentary.caption_color", cm["caption_color"])
 
+    _validate_stories(c)
+
     lk = c["links"]
     lk["enabled"] = bool(lk["enabled"])
     lk["max_height"] = _num("links.max_height", lk["max_height"], 144, 4320, integer=True)
@@ -541,6 +566,56 @@ def _validate(c: dict) -> None:
         raise ConfigError("'upload.meta_api_version' must look like v25.0")
 
 
+def _validate_stories(c: dict) -> None:
+    from .stories import reddit, styles
+    from .voice import valid_voice
+
+    st = c["stories"]
+    for key in ("enabled", "end_question", "ai_ideas"):
+        st[key] = bool(st[key])
+    st["make"] = _choice("stories.make", st["make"], ("ai", "gameplay"))
+    st["style"] = _choice("stories.style", st["style"], tuple(styles.STYLES))
+    st["approval"] = _choice("stories.approval", st["approval"], ("ai_only", "all", "none"))
+    st["seconds"] = _num("stories.seconds", st["seconds"], 20, 88)
+    st["language"] = str(st["language"] or "en").strip().lower().replace("_", "-")
+    if not re.fullmatch(r"[a-z]{2,3}(-[a-z0-9]+)?", st["language"]):
+        raise ConfigError(f"'stories.language' must be a language code like en, es or ar (got {st['language']!r})")
+    st["voice"] = str(st["voice"] or "").strip()
+    if st["voice"] and not valid_voice(st["voice"]):
+        raise ConfigError(f"'stories.voice' must be empty (the voiceover's voice) or a voice like commentary.voice "
+                          f"(got {st['voice']!r})")
+    st["daily_budget"] = _num("stories.daily_budget", st["daily_budget"], 0, 10000)
+    st["per_day"] = _num("stories.per_day", st["per_day"], 0, 100, integer=True)
+    for key in ("image_model", "video_model"):
+        st[key] = str(st[key] or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", st[key]) and not (key == "video_model" and st[key] == "none"):
+            raise ConfigError(f"'stories.{key}' must be a model name like {DEFAULTS['stories'][key]} (got {st[key]!r})")
+    st["resolution"] = _choice("stories.resolution", st["resolution"], ("720p", "1080p"))
+    st["scene_sound"] = _num("stories.scene_sound", st["scene_sound"], 0, 2)
+    st["topics"] = " ".join(str(st["topics"] or "").split())[:500]
+    subs = st["reddit"]
+    if isinstance(subs, str):
+        subs = subs.replace(",", " ").split()
+    if subs in (None, False):
+        subs = []
+    if not isinstance(subs, list):
+        raise ConfigError("'stories.reddit' must be a list of subreddits, e.g. [Glitch_in_the_Matrix, tifu]")
+    cleaned = []
+    for name in subs:
+        sub_name = reddit.clean_subreddit(str(name))
+        if not sub_name:
+            raise ConfigError(f"'stories.reddit' has {name!r}; use subreddit names like Glitch_in_the_Matrix")
+        if sub_name.lower() in reddit.NEVER:
+            log.warning("r/%s doesn't allow its stories to be retold; it's skipped (stories.reddit).", sub_name)
+            continue
+        if sub_name not in cleaned:
+            cleaned.append(sub_name)
+    st["reddit"] = cleaned
+    st["reddit_every_hours"] = _num("stories.reddit_every_hours", st["reddit_every_hours"], 1, 168)
+    st["reddit_min_upvotes"] = _num("stories.reddit_min_upvotes", st["reddit_min_upvotes"], 0, 1000000, integer=True)
+    st["reddit_per_check"] = _num("stories.reddit_per_check", st["reddit_per_check"], 1, 10, integer=True)
+
+
 def ensure_config_file(path: Path | None = None) -> None:
     """The .exe ships a default config.yaml inside its bundle; put an editable copy next to the exe
     (or where --config points, e.g. /data/config.yaml on a server, the first time)."""
@@ -587,6 +662,7 @@ def load_config(path: Path | None = None) -> SimpleNamespace:
         gameplay=resolve(merged["folders"]["gameplay"]),
         music=resolve(merged["folders"]["music"]),
         output=resolve(merged["folders"]["output"]),
+        stories=resolve(merged["folders"]["stories"]),
         state_file=base / "bot_state.json",
         credentials=base / "credentials",
         logs=base / "logs",

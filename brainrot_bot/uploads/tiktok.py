@@ -166,6 +166,7 @@ def upload(video: Path, post: PostInfo, cfg: SimpleNamespace, store, should_stop
                 "disable_comment": False,
                 "disable_stitch": False,
                 "video_cover_timestamp_ms": 1000,
+                **({"is_aigc": True} if post.ai_generated else {}),  # TikTok's "AI-generated" label
             },
             "source_info": source,
         }

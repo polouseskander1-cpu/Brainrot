@@ -1,31 +1,36 @@
 **Download `BrainrotBot-windows.zip`**, unzip it, and double-click `BrainrotBot.exe`.
 Windows may warn that the app isn't signed: click "More info" > "Run anyway".
 
-**Already on 1.2, 1.3 or 1.4?** Open the app and choose **Update** in the menu. **Coming from 1.1?** Stop the
+**Already on 1.2 or later?** Open the app and choose **Update** in the menu. **Coming from 1.1?** Stop the
 bot (menu > Stop the bot), then unzip this download into the same place as before and choose to replace
 the files. Either way, your settings, logins, clips and reels stay.
 
-## What's new in 1.5
+## What's new in 1.6: stories and AI videos
 
-**AI voices that sound like a real person** for the commentary voiceover. Pick one in the menu:
-Look & features > Commentary voiceover > Voice.
+Send an idea and get back a 1-minute narrated reel. On Telegram: `/idea a lighthouse that blinks with
+nobody inside`. The AI helper writes the story (a hook, a twist or a lesson at the end, about 11
+scenes), and sends you the script with buttons:
 
-| Voice | Sounds | Cost |
+| Make it as | What you get | Cost |
 |---|---|---|
-| **Google Gemini** (Puck, Charon, Fenrir, Kore...) | Very natural: among the 3 best in blind listening tests | **Free** for about 50 reels a day, then about $0.003 a reel |
-| **ElevenLabs** | The most natural | About 2 cents a reel; earning money with it needs a paid plan (from about $6 a month) |
-| Norman, John, Bryce, Kristin | Good, a little flat | Free, on your PC |
+| **🎬 AI video** | Every scene drawn by Nano Banana 2 and animated by Google's Veo 3.1, with the sound of the place, in a **claymation**, **anime** or **3D cartoon** look. The characters look the same in every scene. | About $9 a story with Veo Fast ($5 with Lite, $1 with pictures only) |
+| **🎮 Over gameplay** | The narration over full-screen gameplay with big captions | Free |
 
-- Google's voice needs a free key from Google AI Studio: the menu shows you where, checks it, and lets you
-  pick the voice. ElevenLabs lists the voices in your account.
-- **You pay once per reel**: its TikTok, YouTube, Instagram and Facebook versions share one voiceover.
-- **Never stuck**: if an AI voice fails (no internet, the free daily limit used up), the free voice reads
-  that reel, and the AI voice is tried again later. A reel never mixes two voices.
-- **Takes that don't sound like AI**: the AI helper now writes like a real person talking, without the
-  stock phrases ("here's the thing", "let's dive in"...).
-- Google's voices speak any language, so non-English clips get a natural voiceover too.
+- **Ideas from anywhere**: your phone (`/idea`, or `/story` for a story you wrote), the menu (*Stories &
+  AI videos*), `.txt` files in the `stories\inbox` folder, Reddit (with your own Reddit app, once Reddit
+  approved it), or the AI itself in your topics.
+- **Your money is safe**: AI videos wait for your tap, the price is shown before you tap, and a daily
+  budget ($10 by default) is never passed. Shots Google blocks aren't charged. Nothing is paid twice if
+  the bot stops halfway.
+- **Ready to post**: hook, captions, music and cover, then posted like every reel. TikTok posts of AI
+  videos carry TikTok's AI-generated label.
+- AI videos need a Google AI key with billing (menu > *Stories & AI videos* > *Google AI key*); the same
+  key works for the Gemini voice, which can now read the stories too.
 
-Guides: [what each voice costs and its terms](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md#the-commentary-voiceover) ·
+Also: 1.5.1 cut dead air around clicks in long pauses, and uses a question as the hook when the AI
+helper isn't connected.
+
+Guides: [stories and AI videos](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/STORIES.md) ·
 [connecting the platforms](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PLATFORMS.md) ·
 [your phone](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/PHONE.md) ·
 [servers](https://github.com/polouseskander1-cpu/Brainrot/blob/HEAD/docs/SERVER.md)

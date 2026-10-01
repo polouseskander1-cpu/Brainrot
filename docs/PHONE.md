@@ -46,7 +46,14 @@ within a minute and becomes reels like any clip.
 | `/stats` | Views and likes per platform, the best podcasts and gameplay |
 | `/dashboard` | The phone dashboard link |
 | `/pause` / `/resume` | Stop posting for now / post again (reels are still made) |
+| `/idea <your idea>` | The AI writes a 1-minute story from it ([stories](STORIES.md)); `/idea` alone asks for it |
+| `/story <your story>` | Your own story, read as you wrote it |
+| `/stories` | Stories waiting for your OK, being made, and what AI videos cost today |
 | `/help` | What the bot can do |
+
+**Stories**: the script of each story arrives with buttons: **🎬 AI video** (in the look you pick:
+Clay, Anime or 3D, with its price), **🎮 Over gameplay** (free), **🔁 Write again** and **🗑 Drop**. The
+finished reel then arrives like any other. See [STORIES.md](STORIES.md).
 
 ## Discord
 
@@ -74,6 +81,8 @@ clip folder, for example `https://youtu.be/abc123 Diary Of A CEO`. Without a nam
 `From phone` folder (`phone.link_folder` in `config.yaml`).
 
 **Commands**: write `status`, `stats`, `dashboard`, `pause`, `resume` or `help` in the channel.
+`idea <your idea>` and `story <your story>` make [stories](STORIES.md); react 🎬 (AI video), 🎮 (over
+gameplay) or 🗑 (drop) under the script it sends back, and `stories` shows what's waiting.
 
 Discord bots can send files up to 10 MB, so reels longer than about 45 seconds arrive as their cover
 picture instead of a preview video.

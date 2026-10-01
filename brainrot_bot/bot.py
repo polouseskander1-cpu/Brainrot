@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import logging
 import os
 import queue
@@ -39,6 +40,8 @@ from .render import Layout, RenderJob, build_command, compute_layout
 from .report import stats_lines
 from .sfx import write_track
 from .state import State
+from .stories.studio import Studio
+from .styles import apply_style
 from .thumbnail import make_cover
 from .transcribe import Transcriber, Word
 from .translate import SCRIPT_FONTS, base_language, caption_settings, language_name, translate_reel, translated_words
@@ -168,6 +171,14 @@ def unique_path(folder: Path, stem: str, suffix: str) -> Path:
     return candidate
 
 
+def slug_name(title: str) -> str:
+    """A file name from a title: 'The Last Light!' -> 'The_Last_Light'."""
+    name = "".join(ch if ch.isalnum() else "_" for ch in title).strip("_")
+    while "__" in name:
+        name = name.replace("__", "_")
+    return name[:50].strip("_") or "story"
+
+
 def _length_text(seconds: float) -> str:
     minutes = int(seconds // 60)
     return f"{minutes // 60}h {minutes % 60:02d}min" if minutes >= 60 else f"{minutes}-minute"
@@ -208,9 +219,11 @@ class Bot:
                            self.inbox) if persist else None
         self.dashboard = Dashboard(cfg, self.credentials, self.inbox, self._read_state, self._status_text,
                                    self._clip_folders) if persist and cfg.dashboard.enabled else None
+        self.studio = Studio(self) if persist else None
         if self.phone is not None and self.phone.enabled:
             self.phone.status_provider = self._status_text
             self.phone.stats_provider = self._stats_text
+            self.phone.stories_provider = self._stories_text
             self.phone.folders_provider = self._clip_folders
             if self.dashboard is not None:
                 self.phone.dashboard_provider = lambda: dashboard_url(cfg, self.credentials)
@@ -294,6 +307,18 @@ class Bot:
         elif action.kind in ("pause", "resume") and self.uploads is not None:
             self.uploads.pause(action.kind == "pause")
             log.info("Phone: posting %s.", "paused" if action.kind == "pause" else "resumed")
+        elif action.kind == "idea" and self.studio is not None:
+            if not self.cfg.stories.enabled:
+                self._tell("Stories are switched off (menu > Stories).")
+                return
+            self.studio.add_idea(action.text, "you", words=action.choice == "words", make=action.folder)
+        elif action.kind == "story" and self.studio is not None:
+            self._tell(self.studio.choose(action.story, action.choice, action.style))
+
+    def _tell(self, text: str) -> None:
+        """A short answer on the phone."""
+        if self.phone is not None and text:
+            self.phone.say(text)
 
     def _clip_folders(self) -> list[str]:
         root = self.cfg.paths.clips
@@ -332,6 +357,11 @@ class Bot:
             lines.append(f"Waiting for your OK: {waiting}")
         if data.get("posting_paused"):
             lines.append("Posting is paused (/resume to post again).")
+        stories = data.get("stories", {})
+        if self.cfg.stories.enabled and stories:
+            ready = sum(1 for e in stories.values() if e.get("status") == "ready")
+            making = sum(1 for e in stories.values() if e.get("status") in ("approved", "making"))
+            lines.append(f"Stories: {ready} waiting for your OK, {making} being made (/stories)")
         links = sum(1 for i in data.get("links", {}).values() if i.get("status") == "pending")
         if links:
             lines.append(f"Links to download: {links}")
@@ -339,6 +369,11 @@ class Bot:
 
     def _stats_text(self) -> str:
         return "\n".join(stats_lines(self._read_state()))
+
+    def _stories_text(self) -> str:
+        if self.studio is None or not self.cfg.stories.enabled:
+            return "Stories are switched off (menu > Stories)."
+        return self.studio.summary()
 
     # ------------------------------------------------------------ watching
 
@@ -419,6 +454,8 @@ class Bot:
                     if self.should_stop():
                         break
                     self.process(path)
+                if self.studio is not None and not self.should_stop() and not ready:
+                    self.studio.run()
                 if self.uploads is not None and not self.should_stop():
                     self.uploads.run_due(self.should_stop)
                     if self.cfg.upload.stats:
@@ -841,6 +878,112 @@ class Bot:
                 if window not in windows:
                     windows.append(window)
         return windows
+
+    # ------------------------------------------------------------ stories (stories/studio.py does the rest)
+
+    def new_job_dir(self) -> Path:
+        job_dir = WORK_DIR / uuid.uuid4().hex[:12]
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
+
+    @staticmethod
+    def remove_job_dir(job_dir: Path) -> None:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    def pause(self, seconds: float) -> None:
+        """Wait while still answering the phone; raises StopRequested when the bot is told to stop."""
+        self._sleep(seconds)
+        if self.should_stop():
+            raise StopRequested()
+
+    def hear(self, audio: Path) -> list[Word]:
+        return self._hear(audio)
+
+    def gameplay_library(self) -> list[Footage]:
+        return scan_library(self.cfg.paths.gameplay, VIDEO_EXTS, self.tools, self.state.gameplay_cache)
+
+    def gameplay_segments(self, library: list[Footage], length: float) -> list:
+        g = self.cfg.gameplay
+        return plan_segments(library, length, self.state.usage, self.rng, g.skip_start, g.skip_end)
+
+    @contextlib.contextmanager
+    def _using(self, cfg: SimpleNamespace):
+        """Render with other settings for a while (the phone and the posting keep their own)."""
+        saved = self.cfg
+        self.cfg = cfg
+        try:
+            yield
+        finally:
+            self.cfg = saved
+
+    def _story_settings(self, kind: str) -> SimpleNamespace:
+        cfg = copy.deepcopy(self.cfg)
+        cfg.paths = self.cfg.paths
+        cfg.video.layout = "fullscreen"  # the story's own picture fills the screen
+        cfg.edit.cut_silences = False  # the scenes are cut to the narration's pauses
+        cfg.edit.face_tracking = False
+        cfg.captions = apply_style(cfg.captions)  # the caption preset, applied here so it can be adjusted
+        cfg.captions.style = "classic"
+        language = self.cfg.stories.language
+        if base_language(language) != "en":
+            cfg.captions = caption_settings(cfg.captions, language)
+            if base_language(language) in SCRIPT_FONTS:
+                cfg.hook.font = SCRIPT_FONTS[base_language(language)]
+        if kind == "ai":  # composed shots: no punch-ins, and the captions low, under the faces
+            cfg.edit.zoom = False
+            cfg.captions.position = max(cfg.captions.position, 0.72)
+        return cfg
+
+    def finish_story(self, story_id: str, entry: dict, script, base: Path, narration, work: Path, kind: str,
+                     segments: list) -> list[Path]:
+        """The reel of a story, from its picture and narration (base): captions, hook, music, cover; then into
+        the reels folder and the posting queue, like every other reel."""
+        info = probe(self.tools, base)
+        cfg = self._story_settings(kind)
+        music = scan_library(self.cfg.paths.music, AUDIO_EXTS, self.tools, self.state.music_cache)
+        ctx = _Clip(
+            path=base, key=f"story:{story_id}", info=info, layout=compute_layout(cfg.video, info.width, info.height),
+            words=narration.words, loudness=None, language=self.cfg.stories.language, job_dir=work, gameplay=[],
+            music=music, file_hook="", folder="Stories",
+        )
+        with self._using(cfg):
+            item, _, plan, _ = self._render_part(ctx, Piece(0.0, info.duration), "story", script.hook, script.title)
+        origin = entry.get("origin") or {}
+        caption = script.caption + (f"\n\nInspired by a story on r/{origin['subreddit']}" if origin.get("subreddit") else "")
+        hashtags = merge_hashtags(script.hashtags, "#story #fyp")
+        item.post = PostInfo(script.title, hashtags, plan.duration, caption, ai_generated=kind == "ai")
+        item.segments = segments
+        name = f"{slug_name(script.title)}_{story_id}"
+        platforms = list(version_ranges(self.cfg))
+        if platforms:  # the same story for every platform, one copy in each platform's folder
+            item.platforms = platforms
+            self._publish_versions(item, Path("Stories"), name)
+        else:
+            final = unique_path(self.cfg.paths.output / "Stories", name, ".mp4")
+            publish(item.video, final)
+            item.video = final
+            if item.srt:
+                final.with_suffix(".srt").write_text(item.srt, encoding="utf-8")
+            if item.cover is not None and item.cover.exists():
+                publish(item.cover, final.with_suffix(".jpg"))
+                item.cover = final.with_suffix(".jpg")
+        for seg in segments:
+            self.state.usage[seg.key] = self.state.usage.get(seg.key, 0) + 1
+        outputs = list(item.files.values()) or [item.video]
+        if self.uploads is not None:
+            details = {"folder": "Stories", "clip": f"story:{story_id}", "gameplay": sorted({s.key for s in segments}),
+                       "language": ""}
+            versions = {p: (str(path), item.post.duration, details["gameplay"]) for p, path in item.files.items()} or None
+            targets = self.uploads.add(item.video, item.post, self.cfg.paths.stories, details, versions=versions)
+            if targets:
+                log.info("Queued %s for posting on %s%s", item.video.name, ", ".join(targets),
+                         " (waiting for your OK on the phone)" if self.uploads.approval_needed() else "")
+            if self.phone is not None:
+                what = "AI video" if kind == "ai" else "over gameplay"
+                note = f"Story ({what}" + (f", cost ${entry.get('cost', 0):.2f}" if entry.get("cost") else "") + ")"
+                self.phone.reel_ready(item.video, item.cover, script.title, "Stories", item.post.duration, targets,
+                                      self.uploads.approval_needed() and bool(targets), note)
+        return outputs
 
     # ------------------------------------------------------------ rendering
 

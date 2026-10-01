@@ -16,7 +16,7 @@ from .versions import ranges as version_ranges
 from .credentials import Credentials
 from .cloud import synced_folders
 from .links import add_link
-from .phone import DISCORD, TELEGRAM, Discord, PhoneError, Telegram
+from .phone import DISCORD, TELEGRAM, TELEGRAM_COMMANDS, Discord, PhoneError, Telegram
 from .uploads import PLATFORMS, UploadError, platform_name
 from .uploads import facebook, instagram, pinterest, tiktok, x, youtube
 from .uploads.accounts import account_id, set_folder_account, split_account, valid_name
@@ -341,10 +341,9 @@ def connect_telegram(cfg: SimpleNamespace, creds: Credentials) -> bool:
     bot = Telegram(token, chat)
     creds.set(TELEGRAM, {"token": token, "chat_id": chat, "account": "@" + username})
     try:
-        bot.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in (
-            ("status", "What the bot is doing"), ("stats", "Views, likes, best podcasts"),
-            ("pause", "Stop posting for now"), ("resume", "Post again"), ("help", "What I can do"))]})
-        bot.send_text("Connected! New reels will show up here. Send me a video link any time to make reels from it.")
+        bot.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in TELEGRAM_COMMANDS]})
+        bot.send_text("Connected! New reels will show up here. Send me a video link any time to make reels from it, "
+                      "or /idea and a story idea.")
     except (PhoneError, UploadError):
         pass
     ui.say(ui.green(f"  Telegram connected (@{username})."))
@@ -544,7 +543,7 @@ def choose_voice(cfg: SimpleNamespace, creds: Credentials) -> str:
     return local[picked - 3]
 
 
-def _ai_voice_key(provider: str, creds: Credentials, steps: list[str], check) -> bool:
+def _ai_voice_key(provider: str, creds: Credentials, steps: list[str], check, what: str = "voice") -> bool:
     """A working key for the AI voice: the connected one, or a new one pasted here. check(key) -> problem."""
     from .aivoice import NAMES, api_key
 
@@ -558,7 +557,7 @@ def _ai_voice_key(provider: str, creds: Credentials, steps: list[str], check) ->
         problem = check(key)
         if not problem:
             creds.set(provider, {"api_key": key, "account": NAMES[provider]})
-            ui.say(ui.green(f"  {NAMES[provider]} voice connected."))
+            ui.say(ui.green(f"  {NAMES[provider]} {what} connected."))
             return True
         ui.say(ui.red(f"  That didn't work: {problem}"))
         if not ui.ask_yes_no("  Try again?", default=True):
@@ -605,6 +604,20 @@ def _elevenlabs_voice(cfg: SimpleNamespace, creds: Credentials) -> str:
         return f"{ELEVENLABS}:{voices[picked - 1]['id']}"
     voice_id = ui.ask("Voice ID (from the voice's page on elevenlabs.io)").strip()
     return f"{ELEVENLABS}:{voice_id}" if voice_id.isalnum() and 10 <= len(voice_id) <= 40 else ""
+
+
+def connect_google(cfg: SimpleNamespace, creds: Credentials) -> bool:
+    """Menu > Stories: the Google AI key, for the AI videos' pictures and shots (and the Gemini voice)."""
+    from .aivoice import GEMINI, KEY_PAGES
+    from .stories import google
+
+    return _ai_voice_key(GEMINI, creds, [
+        "Google AI key: the AI videos' pictures (Nano Banana 2) and shots (Veo 3.1), and the Gemini voice, use one key.",
+        f"  1. Open {KEY_PAGES[GEMINI]} and sign in with a Google account",
+        "  2. Create API key, then copy it",
+        "  3. Pictures and video have no free tier: turn on billing for the key (Set up billing, in AI Studio)",
+        "  Tip: also set a monthly budget alert in Google Cloud billing, on top of the bot's daily budget.",
+    ], lambda key: google.check_key(key, cfg.stories.image_model), what="key")
 
 
 def add_video_link(cfg: SimpleNamespace) -> None:
@@ -700,6 +713,10 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
     # The optional music folder sits next to the gameplay folder, wherever that was put.
     music = suggested["music"] if gameplay == Path(suggested["gameplay"]).resolve() else gameplay.parent / "Music"
     music.mkdir(parents=True, exist_ok=True)
+    # The stories (scripts, pictures, AI shots) sit next to the clips in the app's own folder.
+    stories = cfg.paths.stories
+    if Path(suggested["clips"]).name == "Clips" and clips == Path(suggested["clips"]).resolve():
+        stories = clips.parent / "Stories"
 
     base = config_path.resolve().parent
     update_config_file(config_path, {
@@ -708,6 +725,7 @@ def run_setup(config_path: Path, only_platforms: bool = False) -> SimpleNamespac
             "clips": _config_value(clips, base),
             "output": _config_value(output, base),
             "music": _config_value(music, base),
+            "stories": _config_value(stories, base),
         },
         "app": {"run_mode": run_mode, "autostart": autostart, "setup_done": True},
         "upload": enabled,

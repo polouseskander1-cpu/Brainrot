@@ -1,5 +1,6 @@
 """Optional help from Claude (Anthropic API): picking the best moments of long videos, writing the
-on-screen hook, the post title / caption / hashtags and the voiceover's take, and translating captions.
+on-screen hook, the post title / caption / hashtags and the voiceover's take, translating captions, and
+writing the stories (stories/script.py).
 
 It is only used when an API key is connected (menu > AI). Without one, or if a request fails, the bot
 falls back to its built-in rules, so reels never wait for the AI.
@@ -331,6 +332,20 @@ class AI:
         if not data:
             return None
         return {key: " ".join(str(data.get(key, "")).split())[:600] for key in ("intro", "outro")}
+
+    def write_story(self, prompt: str) -> dict | None:
+        """A story script (see stories/script.py), or None."""
+        from .stories.script import STORY_SCHEMA, STORY_SYSTEM
+
+        return self.ask(STORY_SYSTEM, prompt, STORY_SCHEMA, effort="high", max_tokens=32000, what="Writing the story with AI")
+
+    def ask_story_ideas(self, prompt: str) -> list[str]:
+        """Fresh story ideas for the channel's topics ([] if it didn't work)."""
+        from .stories.script import IDEAS_SCHEMA, IDEAS_SYSTEM
+
+        data = self.ask(IDEAS_SYSTEM, prompt, IDEAS_SCHEMA, effort="medium", what="Thinking of a story idea with AI")
+        ideas = data.get("ideas") if data else None
+        return [" ".join(str(i).split()) for i in ideas if str(i).strip()] if isinstance(ideas, list) else []
 
     def translate(self, lines: list[str], language: str) -> list[str] | None:
         numbered = "\n".join(f"[{n}] {text}" for n, text in enumerate(lines))

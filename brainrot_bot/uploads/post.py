@@ -26,6 +26,7 @@ class PostInfo:
     hashtags: str
     duration: float
     description: str = ""  # the post text; empty = the title
+    ai_generated: bool = False  # an AI video: labeled as AI-generated where the platform's API allows it (TikTok)
 
     @property
     def text(self) -> str:
@@ -74,12 +75,15 @@ class PostInfo:
         return re.sub(r"[<>]", "", self.render("youtube"))
 
     def to_dict(self) -> dict:
-        return {"title": self.title, "hashtags": self.hashtags, "duration": self.duration, "description": self.description}
+        data = {"title": self.title, "hashtags": self.hashtags, "duration": self.duration, "description": self.description}
+        if self.ai_generated:
+            data["ai_generated"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "PostInfo":
         return cls(str(data.get("title", "")), str(data.get("hashtags", "")), float(data.get("duration", 0)),
-                   str(data.get("description", "")))
+                   str(data.get("description", "")), bool(data.get("ai_generated", False)))
 
 
 def youtube_title(post: PostInfo, templates: dict | None) -> str:

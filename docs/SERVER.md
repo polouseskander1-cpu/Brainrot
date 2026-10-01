@@ -56,12 +56,17 @@ The folders are inside `data` next to `docker-compose.yml`:
 | `data/clips/<podcast name>/` | The clips, one subfolder per podcast / influencer / topic |
 | `data/output/<podcast name>/` | The finished reels and their cover pictures |
 | `data/music` | Optional background music |
+| `data/stories/` | Each [story](STORIES.md)'s script, narration, pictures and AI shots; `.txt` files in `data/stories/inbox` become ideas |
 
 Copy files in with whatever you like (`scp`, a network share, Syncthing...), send a video link to the
 phone bot, or put links in a `links.txt` file inside a clip folder. To use Google Drive or Dropbox
 folders instead, see [Cloud folders](#cloud-folders-google-drive-dropbox) below.
 
 After editing `data/config.yaml` (with any text editor), run `docker compose restart`.
+
+Stories are easiest from the phone (`/idea ...` on Telegram). The Google AI key for AI videos can be
+pasted in the menu (`docker compose run --rm bot`, then *Stories & AI videos*) or set as
+`GEMINI_API_KEY` in the environment.
 
 ## Logging in to the platforms
 

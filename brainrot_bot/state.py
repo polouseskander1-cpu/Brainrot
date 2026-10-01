@@ -1,4 +1,4 @@
-"""bot_state.json: which clips are done or failed, and how often each gameplay recording was used."""
+"""bot_state.json: which clips are done or failed, how often each gameplay recording was used, and the stories."""
 
 from __future__ import annotations
 
@@ -27,6 +27,10 @@ class State:
             "links": {},
             "fingerprints": [],
             "update": {},
+            "stories": {},
+            "story_spend": {},
+            "story_checks": {},
+            "reddit_seen": [],
         }
         if path.exists():
             try:

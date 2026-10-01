@@ -4,6 +4,8 @@
   you tap Post (at the next posting time) or Now; Skip drops it. Without approval you can still stop
   a reel from being posted.
 - Send the bot a video link and it's downloaded into the clip folder you pick.
+- /idea <your idea> and the AI writes a story from it; /story <your story> reads yours as written. The
+  script comes back with buttons: an AI video (in the look you pick), over gameplay, write it again, drop.
 - /status and /stats (Telegram) or "status" / "stats" (Discord) tell you what's going on.
 - You also hear when a post goes live and when something needs you (a failed clip, an expired login).
 
@@ -41,6 +43,8 @@ URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 TELEGRAM_LIMIT = 49 * 1024 * 1024  # bots can send files up to 50 MB
 DISCORD_LIMIT = 9 * 1024 * 1024  # 10 MB for bots in a normal server
 DISCORD_EMOJI = {"✅": "approve", "\U0001F680": "now", "❌": "skip"}  # check, rocket, cross
+DISCORD_STORY = {"\U0001F3AC": "ai", "\U0001F3AE": "gameplay", "\U0001F5D1": "drop"}  # clapper, game controller, bin
+STYLE_SHORT = {"claymation": "Clay", "anime": "Anime", "cartoon3d": "3D"}
 
 
 class PhoneError(Exception):
@@ -51,10 +55,14 @@ class PhoneError(Exception):
 class Action:
     """Something you asked for from the phone, done by the bot between its steps."""
 
-    kind: str  # approve | now | skip | link | pause | resume
+    kind: str  # approve | now | skip | link | pause | resume | idea | story
     video: str = ""
     url: str = ""
-    folder: str = ""
+    folder: str = ""  # link: the clip folder; idea: how to make it (ai / gameplay / "" = ask)
+    text: str = ""  # idea: what you wrote
+    story: str = ""  # story: its id
+    choice: str = ""  # idea: "words" = your own story; story: ai | gameplay | drop | rewrite
+    style: str = ""  # story: the AI video's look
 
 
 def make_preview(tools: Tools, video: Path, out: Path) -> Path | None:
@@ -154,6 +162,26 @@ class Telegram:
     def send_text(self, text: str) -> None:
         self.call("sendMessage", {"chat_id": self.chat_id, "text": text[:4000], "disable_web_page_preview": True})
 
+    @staticmethod
+    def story_buttons(story_id: str, style: str, cost: float, can_ai: bool) -> dict:
+        rows = []
+        if can_ai:
+            name = STYLE_SHORT.get(style, style)
+            rows.append([{"text": f"🎬 AI video · {name} · ~${cost:.2f}", "callback_data": f"sa|{story_id}"}])
+            rows.append([{"text": short + (" ✓" if key == style else ""), "callback_data": f"ss|{story_id}|{key}"}
+                         for key, short in STYLE_SHORT.items()])
+        rows.append([{"text": "🎮 Over gameplay · free", "callback_data": f"sg|{story_id}"}])
+        rows.append([{"text": "🔁 Write again", "callback_data": f"sr|{story_id}"},
+                     {"text": "🗑 Drop", "callback_data": f"sd|{story_id}"}])
+        return {"inline_keyboard": rows}
+
+    def send_story(self, story_id: str, text: str, style: str, cost: float, can_ai: bool) -> str:
+        if not can_ai:
+            text += "\n(AI videos need a Google AI key: menu > Stories on the computer.)"
+        result = self.call("sendMessage", {"chat_id": self.chat_id, "text": text[:4000], "disable_web_page_preview": True,
+                                           "reply_markup": self.story_buttons(story_id, style, cost, can_ai)})
+        return str((result or {}).get("message_id", ""))
+
     def poll(self, phone: "Phone") -> None:
         updates = self.call("getUpdates", {"offset": phone.memory.get("telegram_offset", 0), "timeout": 8,
                                            "allowed_updates": ["message", "callback_query"]}, timeout=20) or []
@@ -173,7 +201,9 @@ class Telegram:
             return  # not you
         kind, _, rest = str(query.get("data", "")).partition("|")
         answer = ""
-        if kind in ("a", "n", "s"):
+        if kind in ("sa", "sg", "ss", "sr", "sd"):
+            answer = self._story_tap(phone, kind, rest, message)
+        elif kind in ("a", "n", "s"):
             video = phone.video_for(rest)
             if video:
                 action = {"a": "approve", "n": "now", "s": "skip"}[kind]
@@ -202,11 +232,43 @@ class Telegram:
                 self.send_text(f"✅ {answer}. It's downloaded within a minute.")
         self.call("answerCallbackQuery", {"callback_query_id": query.get("id"), "text": answer[:190]})
 
+    def _story_tap(self, phone: "Phone", kind: str, rest: str, message: dict) -> str:
+        story_id, _, style = rest.partition("|")
+        saved = phone.story_memory(story_id)
+        if saved is None:
+            return "This story is no longer waiting"
+        done = None
+        if kind == "ss":
+            phone.update_story(story_id, style=style)
+            keyboard = self.story_buttons(story_id, style, saved["cost"], saved["can_ai"])
+            self.call("editMessageReplyMarkup", {"chat_id": self.chat_id, "message_id": message.get("message_id"),
+                                                 "reply_markup": keyboard})
+            return f"Look: {STYLE_SHORT.get(style, style)}"
+        if kind == "sa":
+            phone.actions.put(Action("story", story=story_id, choice="ai", style=saved["style"]))
+            done = f"🎬 AI video ({STYLE_SHORT.get(saved['style'], saved['style'])})"
+        elif kind == "sg":
+            phone.actions.put(Action("story", story=story_id, choice="gameplay"))
+            done = "🎮 Over gameplay"
+        elif kind == "sr":
+            phone.actions.put(Action("story", story=story_id, choice="rewrite"))
+            done = "🔁 Writing it again"
+        else:
+            phone.actions.put(Action("story", story=story_id, choice="drop"))
+            done = "🗑 Dropped"
+        phone.forget_story(story_id)
+        self.call("editMessageReplyMarkup", {"chat_id": self.chat_id, "message_id": message.get("message_id"),
+                                             "reply_markup": {"inline_keyboard": [[{"text": done, "callback_data": "x|done"}]]}})
+        return done
+
     def _message(self, phone: "Phone", message: dict) -> None:
         if str((message.get("chat") or {}).get("id")) != self.chat_id:
             return
         text = (message.get("text") or message.get("caption") or "").strip()
         if not text:
+            return
+        if phone.awaiting_text and not text.startswith("/") and not URL_RE.fullmatch(text):
+            self.send_text(phone.take_text(text))
             return
         if self.awaiting_folder and not text.startswith("/") and not URL_RE.search(text):
             link = phone.pending_links.pop(self.awaiting_folder, None)
@@ -301,6 +363,18 @@ class Discord:
     def send_text(self, text: str) -> None:
         self.call("POST", f"/channels/{self.channel_id}/messages", json_body={"content": text[:1900]})
 
+    def send_story(self, story_id: str, text: str, style: str, cost: float, can_ai: bool) -> str:
+        how = ((f"React 🎬 for an AI video ({STYLE_SHORT.get(style, style)}, about ${cost:.2f}), " if can_ai
+                else "(AI videos need a Google AI key: menu > Stories on the computer.)\nReact ")
+               + "🎮 to make it over gameplay (free), 🗑 to drop it.")
+        message = self.call("POST", f"/channels/{self.channel_id}/messages", json_body={"content": (text[:1650] + "\n\n" + how)[:1900]})
+        message_id = str(message.get("id", ""))
+        for emoji, choice in DISCORD_STORY.items():
+            if choice != "ai" or can_ai:
+                self.call("PUT", f"/channels/{self.channel_id}/messages/{message_id}/reactions/{quote(emoji)}/@me")
+                time.sleep(0.3)
+        return message_id
+
     def _counts(self, user: dict) -> bool:
         if user.get("bot") or str(user.get("id")) == self._me():
             return False
@@ -324,6 +398,15 @@ class Discord:
                         self.send_text(f"{Path(video).name}: {label}")
                     phone.forget_discord(message_id)
                     break
+        # Reactions on stories that wait for your choice.
+        for message_id, story_id in dict(phone.memory.get("discord_stories", {})).items():
+            for emoji, choice in DISCORD_STORY.items():
+                users = self.call("GET", f"/channels/{self.channel_id}/messages/{message_id}/reactions/{quote(emoji)}") or []
+                if any(self._counts(u) for u in users):
+                    saved = phone.story_memory(story_id) or {}
+                    phone.actions.put(Action("story", story=story_id, choice=choice, style=saved.get("style", "")))
+                    phone.forget_story(story_id)
+                    break
         # New messages: commands and links.
         after = phone.memory.get("discord_after")
         if not after:
@@ -336,6 +419,9 @@ class Discord:
             if not self._counts(message.get("author") or {}):
                 continue
             text = (message.get("content") or "").strip()
+            if phone.awaiting_text and text and not URL_RE.fullmatch(text) and not phone.command(text, peek=True):
+                self.send_text(phone.take_text(text))
+                continue
             reply = phone.command(text)
             if reply:
                 self.send_text(reply)
@@ -352,8 +438,16 @@ class Discord:
 
 
 HELP = ("Send me a video link to make reels from it.\n"
+        "/idea <your idea> - the AI writes a story from it\n/story <your story> - your own story, read as you wrote it\n"
+        "/stories - stories waiting for you, and what AI videos cost today\n"
         "/status - what the bot is doing\n/stats - views, likes, best podcasts\n/dashboard - the phone dashboard link\n"
         "/pause - stop posting for now\n/resume - post again")
+TELEGRAM_COMMANDS = (("idea", "The AI writes a story from your idea"), ("story", "Your own story, read as you wrote it"),
+                     ("stories", "Stories waiting for you, today's cost"), ("status", "What the bot is doing"),
+                     ("stats", "Views, likes, best podcasts"), ("pause", "Stop posting for now"), ("resume", "Post again"),
+                     ("help", "What I can do"))
+IDEA_THANKS = "✍️ Got it. The AI is writing the story; the script comes here in a minute or two."
+STORY_THANKS = "✍️ Got it. Your story is being split into scenes; it comes here in a minute or two."
 
 
 def clean_folder_name(text: str) -> str:
@@ -376,6 +470,8 @@ class Phone:
         self.stats_provider: Callable[[], str] = lambda: "No stats yet."
         self.folders_provider: Callable[[], list[str]] = lambda: []
         self.dashboard_provider: Callable[[], str] = lambda: ""
+        self.stories_provider: Callable[[], str] = lambda: "Stories are switched off."
+        self.awaiting_text = ""  # "idea" or "story": the next message you send is it
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -443,11 +539,25 @@ class Phone:
         self.pending_links[link_id] = {"url": url, "folders": folders}
         return link_id, folders
 
-    def command(self, text: str) -> str:
-        """The answer to a command, or '' if the text isn't one."""
-        word = text.strip().lower().lstrip("/!").split("@")[0].split(" ")[0] if text else ""
+    def command(self, text: str, peek: bool = False) -> str:
+        """The answer to a command, or '' if the text isn't one. peek: only say whether it is one."""
+        word = text.strip().lower().lstrip("/!").split("@")[0].split()[0] if text and text.strip() else ""
+        if peek:
+            return word if word in ("start", "help", "status", "stats", "dashboard", "pause", "resume", "idea", "story",
+                                    "stories") else ""
+        if word in ("start", "help", "status", "stats", "dashboard", "pause", "resume", "stories"):
+            self.awaiting_text = ""
         if word in ("start", "help"):
             return HELP
+        if word in ("idea", "story"):
+            rest = text.strip().split(None, 1)[1].strip() if len(text.strip().split(None, 1)) > 1 else ""
+            if not rest:
+                self.awaiting_text = word
+                return ("Send me the idea (a sentence is enough):" if word == "idea"
+                        else "Send me your story (it's read as you wrote it):")
+            return self._idea(word, rest)
+        if word == "stories":
+            return self.stories_provider()
         if word == "status":
             return self.status_provider()
         if word == "stats":
@@ -460,7 +570,53 @@ class Phone:
             return "Posting paused. Send /resume to post again." if word == "pause" else "Posting again."
         return ""
 
+    def _idea(self, kind: str, text: str) -> str:
+        self.awaiting_text = ""
+        self.actions.put(Action("idea", text=text, choice="words" if kind == "story" else ""))
+        return IDEA_THANKS if kind == "idea" else STORY_THANKS
+
+    def take_text(self, text: str) -> str:
+        """The message after /idea or /story."""
+        return self._idea(self.awaiting_text or "idea", text)
+
+    def story_memory(self, story_id: str) -> dict | None:
+        with self._lock:
+            saved = self.memory.get("stories", {}).get(story_id)
+            return dict(saved) if saved else None
+
+    def update_story(self, story_id: str, **values) -> None:
+        with self._lock:
+            if story_id in self.memory.get("stories", {}):
+                self.memory["stories"][story_id].update(values)
+                self._save()
+
+    def forget_story(self, story_id: str) -> None:
+        with self._lock:
+            self.memory.setdefault("stories", {}).pop(story_id, None)
+            for message_id, sid in list(self.memory.get("discord_stories", {}).items()):
+                if sid == story_id:
+                    self.memory["discord_stories"].pop(message_id, None)
+            self._save()
+
     # ------------------------------------------------------------------ what the bot tells you (main thread)
+
+    def say(self, text: str) -> None:
+        if self.enabled and text:
+            self.outbox.put(("text", text))
+
+    def story_ready(self, story_id: str, text: str, costs: dict[str, float], style: str, can_ai: bool) -> None:
+        """A written story, with the choices: AI video (in which look), over gameplay, write again, drop."""
+        if not self.enabled:
+            return
+        cost = costs.get(style, max(costs.values()) if costs else 0.0)
+        with self._lock:
+            stories = self.memory.setdefault("stories", {})
+            stories[story_id] = {"style": style, "cost": cost, "can_ai": can_ai}
+            if len(stories) > 200:
+                for old in list(stories)[: len(stories) - 200]:
+                    stories.pop(old, None)
+            self._save()
+        self.outbox.put(("story", story_id, text, style, cost, can_ai))
 
     def reel_ready(self, video: Path, cover: Path | None, title: str, folder: str, duration: float, targets: list[str],
                    waiting: bool, note: str = "") -> None:
@@ -519,8 +675,23 @@ class Phone:
             self._thread.join(timeout=15)
             self._thread = None
 
+    def _menu_commands(self) -> None:
+        """Telegram's command menu, set again when the bot learns new commands (after an update)."""
+        from . import __version__
+
+        if self.memory.get("commands_version") == __version__:
+            return
+        for channel in self.channels:
+            if isinstance(channel, Telegram):
+                channel.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in TELEGRAM_COMMANDS]})
+        self.remember(commands_version=__version__)
+
     def _run(self) -> None:
         failures = 0
+        try:
+            self._menu_commands()
+        except (PhoneError, UploadError) as exc:
+            log.debug("Phone: %s", exc)
         while not self._stop.is_set():
             try:
                 self._send_waiting()
@@ -550,11 +721,21 @@ class Phone:
             try:
                 if job[0] == "reel":
                     self._send_reel(*job[1:])
+                elif job[0] == "story":
+                    self._send_story(*job[1:])
                 else:
                     for channel in self.channels:
                         channel.send_text(job[1])
             except (PhoneError, UploadError, OSError) as exc:
                 log.warning("Couldn't send to the phone: %s", exc)
+
+    def _send_story(self, story_id: str, text: str, style: str, cost: float, can_ai: bool) -> None:
+        for channel in self.channels:
+            message_id = channel.send_story(story_id, text, style, cost, can_ai)
+            if isinstance(channel, Discord) and message_id:
+                with self._lock:
+                    self.memory.setdefault("discord_stories", {})[message_id] = story_id
+                    self._save()
 
     def _send_reel(self, ref: str, video: Path, cover: Path | None, text: str, waiting: bool, has_targets: bool) -> None:
         preview = None

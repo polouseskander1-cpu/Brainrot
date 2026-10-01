@@ -21,7 +21,7 @@ from .media import AUDIO_EXTS, VIDEO_EXTS, MediaError, Tools, find_tools
 from .report import stats_lines
 from .uploads import PLATFORMS, platform_name
 from .dashboard import dashboard_url, qr_text
-from .wizard import add_video_link, choose_look, connect_ai, run_setup, setup_phone
+from .wizard import add_video_link, choose_look, connect_ai, connect_google, run_setup, setup_phone
 from . import updater
 
 log = logging.getLogger("brainrot")
@@ -113,6 +113,12 @@ def _status_lines(cfg: SimpleNamespace, running: bool, in_window: bool) -> list[
     creds = Credentials(cfg.paths.credentials)
     ai_on = cfg.ai.enabled and bool(creds.get(AI_KEY))
     lines.append("  AI:          " + (f"Claude ({cfg.ai.model})" if ai_on else ui.dim("off (built-in rules)")))
+    stories = state.get("stories", {})
+    if cfg.stories.enabled and stories:
+        ready = sum(1 for e in stories.values() if e.get("status") == "ready")
+        making = sum(1 for e in stories.values() if e.get("status") in ("new", "approved", "making"))
+        made = sum(1 for e in stories.values() if e.get("status") == "done")
+        lines.append(f"  Stories:     {made} made, {making} in progress" + (ui.yellow(f", {ready} waiting for your OK") if ready else ""))
     uploads = state.get("uploads", {})
     blocked = state.get("upload_blocked", {})
     posting = []
@@ -373,6 +379,12 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart, found: list
             choose_look(cfg, config_path)
             settings_changed()
 
+        def stories() -> None:
+            from .stories.menu import stories_menu
+
+            if stories_menu(cfg, config_path, connect_google):
+                settings_changed()
+
         exit_code: list[int] = []
 
         def update() -> None:
@@ -389,6 +401,7 @@ def _menu(config_path: Path, in_window: InWindowBot, start, restart, found: list
             ("Watch live activity", lambda: _watch_log(cfg)),
             ("Stats: views, likes, best podcasts and gameplay", lambda: _show_stats(cfg)),
             ("Look & features: caption style, layout, zooms, emojis...", look),
+            ("Stories & AI videos: " + ("on" if cfg.stories.enabled else "off"), stories),
             ("Connect accounts / auto-posting", accounts),
             ("AI helper (Claude): " + ("connected" if ai_on else "connect"), ai),
             ("Phone (Telegram / Discord): " + (phone_state or "connect"), phone),

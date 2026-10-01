@@ -9,6 +9,34 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from brainrot_bot import ai as ai_module
+from brainrot_bot.stories import script as story_module
+
+# A short story as the AI writes it (4 scenes, 2 characters).
+STORY = {
+    "title": "The Lighthouse That Blinked Twice",
+    "hook": "Nobody lives there. It still blinks.",
+    "caption": "Would you have climbed the stairs?",
+    "hashtags": ["mystery", "#story", "light house"],
+    "voice": "Hushed and tense, slowing down before the reveal.",
+    "mood": "eerie",
+    "setting": "A rocky northern coast at night in the 1950s, cold blue light and warm amber lamps.",
+    "characters": [
+        {"name": "Mara", "look": "a 60-year-old keeper with a grey braid and a yellow raincoat"},
+        {"name": "Tom", "look": "a tall fisherman with a red beard and a green knitted hat"},
+    ],
+    "scenes": [
+        {"narration": "Every night at nine, the old lighthouse blinked twice.", "visual": "Mara watches the lighthouse from her porch.",
+         "camera": "wide shot, static", "sound": "waves and wind", "characters": ["Mara"]},
+        {"narration": "Nobody had lived there for forty years, and the door was welded shut after the storm.",
+         "visual": "The empty tower in thick fog, its lamp flashing.", "camera": "slow push-in", "sound": "foghorn far away",
+         "characters": []},
+        {"narration": "Tom laughed at her. Ghosts don't pay for electricity, he said.", "visual": "Tom laughs at the bar.",
+         "camera": "close-up", "sound": "a busy harbor bar", "characters": ["Tom", "Mara"]},
+        {"narration": "So Mara cut the lock, climbed the stairs and found a note in her own handwriting. Would you have gone up?",
+         "visual": "Mara holds a yellowed note at the top of a spiral staircase.", "camera": "low angle, slow tilt up",
+         "sound": "creaking metal stairs", "characters": ["Mara", "Nobody"]},
+    ],
+}
 
 
 class FakeClaude:
@@ -19,6 +47,8 @@ class FakeClaude:
                      "caption": "Would you have made the same choice?", "hashtags": ["money", "story"]}
         self.commentary = {"intro": "Here is why this matters.", "outro": "Honestly, I think he is right. Would you do the same?"}
         self.prefix = "ES:"
+        self.story = dict(STORY)
+        self.ideas = ["A lighthouse that blinks twice every night, although nobody has lived there for forty years."]
         self.status = 200  # e.g. 401 to test a refused key
         self.stop_reason = "end_turn"
         self.url = ""
@@ -36,6 +66,10 @@ class FakeClaude:
             return self.copy
         if system == ai_module.COMMENTARY_SYSTEM:
             return self.commentary
+        if system == story_module.STORY_SYSTEM:
+            return self.story
+        if system == story_module.IDEAS_SYSTEM:
+            return {"ideas": self.ideas}
         if system == ai_module.TRANSLATE_SYSTEM:
             lines = re.findall(r"^\[(\d+)\] (.*)$", prompt.split("<lines>")[1], re.M)
             return {"lines": [{"n": int(n), "text": f"{self.prefix} {text}"} for n, text in lines]}

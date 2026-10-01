@@ -43,7 +43,9 @@ The Whisper speech-recognition models are downloaded on first use (not included)
 released under the MIT License by OpenAI, converted by SYSTRAN.
 
 Optional online services, used only with your own key: Anthropic (Claude), Google Gemini API
-(AI voices) and ElevenLabs (AI voices). Their own terms apply to what you send and get back.
+(AI voices, and for stories the Nano Banana pictures and Veo video shots, which carry Google's SynthID
+watermark), ElevenLabs (AI voices) and Reddit (story ideas, with your own approved Reddit app). Their own
+terms apply to what you send and get back.
 
 The voiceover's voice is downloaded on first use (not included), into the "models" folder:
   Piper (models/piper) - MIT License, https://github.com/rhasspy/piper (release 2023.11.14-2). It comes

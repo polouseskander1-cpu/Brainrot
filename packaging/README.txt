@@ -30,6 +30,11 @@ BRAINROT BOT - quick start (Windows)
    sounds like a real person (Google Gemini: free for about 50 reels a day; or ElevenLabs), or by a
    free voice on your PC. Menu > Look & features > Commentary voiceover > Voice.
 
+6. Stories and AI videos: send your bot an idea on Telegram (/idea a lighthouse that blinks with
+   nobody inside) and get back a 1-minute narrated reel, over gameplay (free) or as a full AI video
+   (each scene animated by Google's Veo in a claymation, anime or 3D cartoon look; about $9 a story,
+   it asks first and keeps to your daily budget). Menu > Stories & AI videos. Guide: docs/STORIES.md
+
 Double-click BrainrotBot.exe again at any time for the menu: what the bot is doing, the folders,
 add a video link, the phone dashboard (scan its QR code on the same Wi-Fi), stats, look & features,
 connect accounts, and start / stop. While it runs in the background, its icon sits next to the clock.
@@ -44,4 +49,4 @@ Look & feel (caption colors, font size, words per caption, ...): menu > Look & f
 config.yaml next to BrainrotBot.exe with Notepad after the first start. Every setting is explained there.
 
 Full guide and help: https://github.com/polouseskander1-cpu/Brainrot
-  Connecting each platform: docs/PLATFORMS.md    Phone: docs/PHONE.md
+  Connecting each platform: docs/PLATFORMS.md    Phone: docs/PHONE.md    Stories: docs/STORIES.md

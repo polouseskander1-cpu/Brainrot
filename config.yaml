@@ -6,6 +6,7 @@ folders:
   gameplay: gameplay    # your gameplay recordings (Minecraft, parkour, Subway Surfers...). Picked at random.
   music: music          # optional quiet background music. Leave the folder empty for none.
   output: output        # finished reels appear here, in the same subfolders as the clips
+  stories: stories      # each story's script, narration, pictures and AI shots; drop .txt ideas in stories/inbox
 
 watch:
   poll_seconds: 10      # how often to look for new clips
@@ -145,6 +146,37 @@ commentary:
   style: ''             # Google voices: how to read it, e.g. "calm and serious". '' = like a podcast host reacting to a clip
   gemini_model: gemini-3.8-flash-tts   # gemini-3.8-flash-lite-tts = cheaper, a little less natural
   elevenlabs_model: eleven_v4          # eleven_flash_v2_5 = half the price
+
+stories:
+  # An idea becomes a 1-minute narrated reel: a full AI video (every scene a shot made by Google's Veo from a
+  # picture drawn by Nano Banana 2) or the narration over full-screen gameplay. Send ideas from the phone
+  # (/idea on Telegram, "idea ..." on Discord), the menu (Stories), or as .txt files in stories/inbox.
+  # The AI helper (Claude) writes each story; AI videos need a Google AI key with billing (menu > Stories).
+  enabled: true
+  make: ai              # what an idea becomes: ai = a full AI video (asks first, costs money) | gameplay = over gameplay (free)
+  style: claymation     # the AI videos' look: claymation | anime | cartoon3d (each has its own engineered prompts)
+  approval: ai_only     # wait for your OK on the phone (or in the menu) for: ai_only = AI videos | all = every story | none
+  seconds: 75           # about how long each story is (TikTok only pays for videos over 1 minute; at most 88)
+  language: en          # the language the stories are written and read in
+  voice: ''             # the narrator: '' = the voiceover's voice (commentary.voice), or e.g. gemini:Charon
+  end_question: true    # end with a question to the viewers, which brings comments
+  daily_budget: 10      # US dollars a day that AI videos may cost at most (0 = no AI videos); a story that
+                        # doesn't fit waits for the next day
+  per_day: 4            # stories made per day at most
+  image_model: gemini-3.1-flash-image          # Nano Banana 2: $0.067 a picture (about 15 pictures a story)
+  video_model: veo-3.1-fast-generate-preview   # $0.10 a second (about $8-9 a story) | veo-3.1-lite-generate-preview =
+                        # $0.05 | veo-3.1-generate-preview = the best, $0.40 | none = pictures moved by a slow camera
+  resolution: 720p      # 720p or 1080p (Veo Fast: $0.12 a second at 1080p)
+  scene_sound: 0.35     # how loud each shot's own sound (wind, rain, steps) plays under the narration (0 = off)
+  ai_ideas: false       # when no ideas are waiting, the AI thinks of one in these topics:
+  topics: mysterious encounters and eerie coincidences, wise little stories with a lesson, small acts of kindness with a twist
+  reddit: []            # subreddits whose top posts become ideas (the AI writes a new story from the idea, never the
+                        # post itself), e.g. [Glitch_in_the_Matrix, LetsNotMeet, MaliciousCompliance, GetMotivated].
+                        # Needs a Reddit app that Reddit approved (menu > Stories > Reddit); earning money from it
+                        # needs Reddit's written approval. r/nosleep and others that forbid retelling are skipped.
+  reddit_every_hours: 6 # how often to look at Reddit
+  reddit_min_upvotes: 300
+  reddit_per_check: 1   # new ideas taken from Reddit each time
 
 links:
   # Put video links (YouTube, TikTok, Instagram, X...) in a links.txt file inside a clips folder, one per line,

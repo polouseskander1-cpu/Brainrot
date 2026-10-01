@@ -7,6 +7,10 @@ yellow word-by-word captions. It runs 24/7, finds the best moments of long episo
 of every reel for each platform (1 minute or longer for TikTok, under a minute for YouTube Shorts...),
 and can post them to TikTok, Instagram, Facebook, YouTube, X and Pinterest, with a tap-to-approve on your phone.
 
+It also makes **stories**: send an idea from your phone and get a 1-minute narrated reel, either as a
+**full AI video** (every scene animated by Google's Veo, in a claymation, anime or 3D cartoon look) or
+over gameplay. → [docs/STORIES.md](docs/STORIES.md)
+
 ```
 ┌────────────────────────┐
 │                        │
@@ -122,6 +126,18 @@ don't pay for plain reposts; see [Getting paid](docs/PLATFORMS.md#getting-paid-w
 
 Change any of this in the menu under **Look & features**, or in `config.yaml`.
 
+**Stories and AI videos** → [docs/STORIES.md](docs/STORIES.md)
+- Send an idea from your phone (`/idea a lighthouse that blinks with nobody inside`), the menu, a `.txt`
+  file in `stories\inbox`, Reddit (with your own approved Reddit app) or let the AI think of one.
+- The AI helper writes the story: a hook, about 75 seconds of narration with a twist or a lesson, split
+  into about 11 scenes, with the characters described so they look the same in every scene.
+- The script comes to your phone with buttons. **Over gameplay** (free): the narration over full-screen
+  gameplay with captions. **AI video**: each scene drawn by Nano Banana 2 and animated by Veo 3.1 with
+  its own sound, in one of three looks: **claymation**, **anime** or **3D cartoon**. About $9 a story
+  with Veo Fast ($5 with Lite, $1 with pictures only); it waits for your OK and never goes over your
+  daily budget (`stories.daily_budget`, $10). Needs a Google AI key with billing.
+- The reel is captioned and posted like every other one (TikTok posts carry TikTok's AI-generated label).
+
 ## Posting
 
 Every finished reel goes to each connected account, spaced out and at good times of day, then its
@@ -166,7 +182,7 @@ Step-by-step setup for each platform: **[docs/PLATFORMS.md](docs/PLATFORMS.md)**
 
 - **Telegram or Discord**: each new reel arrives as a small preview. Tap *Post*, *Now* or *Skip*
   (turn on `phone.approval` so nothing is posted without your OK). Send the bot a link to make reels
-  from it, `/stats` for the numbers. → [docs/PHONE.md](docs/PHONE.md)
+  from it, `/idea` for a story, `/stats` for the numbers. → [docs/PHONE.md](docs/PHONE.md)
 - **Phone dashboard**: menu > *Phone dashboard* shows a QR code. Scan it with a phone on the same Wi-Fi
   to see what's waiting, watch it, approve it, add links and see the stats.
 
@@ -206,6 +222,11 @@ choose *Stop the bot* then *Start the bot*. Some useful ones:
 | `upload.hours_between_posts` | `3` | At least this long between posts on the same account. |
 | `phone.approval` | off | Reels wait for your OK on the phone. |
 | `ai.model` | `claude-opus-5` | The Claude model the AI helper uses. |
+| `stories.make` | `ai` | What an idea becomes: `ai` (a full AI video, asks first) or `gameplay` (over gameplay, free). |
+| `stories.style` | `claymation` | The AI videos' look: `claymation`, `anime` or `cartoon3d`. |
+| `stories.video_model` | Veo 3.1 Fast | `veo-3.1-lite-generate-preview` (half the price), `veo-3.1-generate-preview` (the best) or `none` (pictures only). |
+| `stories.daily_budget` | `10` | US dollars AI videos may cost per day at most. |
+| `stories.reddit` | `[]` | Subreddits whose top posts become story ideas (needs your own approved Reddit app). |
 
 ## Run from the source code (Mac, Linux, Windows)
 

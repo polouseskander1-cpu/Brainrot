@@ -118,7 +118,9 @@ the voiceover makes adding them one file per clip.
 
 A generic narrator voice isn't the kind of AI content YouTube asks you to
 [label](https://support.google.com/youtube/answer/14328491) (that's realistic content, like making a real
-person say something they didn't), so the bot doesn't label posts as AI-made.
+person say something they didn't), so the bot doesn't label these posts as AI-made. Stories made as full AI
+videos are different: every picture in them is AI-made, so their TikTok posts carry TikTok's AI-generated
+label ([STORIES.md](STORIES.md#labels-and-the-platforms-rules)).
 
 ## When and what gets posted
 
