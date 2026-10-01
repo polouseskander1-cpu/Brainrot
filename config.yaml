@@ -131,13 +131,20 @@ commentary:
   enabled: true
   intro: true           # a short line before the clip that sets it up
   outro: true           # your take after the clip: context or a counterpoint, and a question for the comments
-  voice: norman         # norman, john, bryce (male), kristin (female): natural voices, downloaded once (about 85 MB)
-                        # system = the computer's own voice | any Piper voice name, e.g. en_GB-alan-medium
-                        # (list: huggingface.co/rhasspy/piper-voices - check its license before earning with it)
+  voice: norman         # AI voices that sound like a real person (connect them in the menu, which also picks the voice):
+                        #   gemini:Puck = Google's Gemini voices (Puck, Charon, Fenrir, Kore... the best value: free for
+                        #   about 50 reels a day, then about $0.003 a reel) | elevenlabs:<voice id> = ElevenLabs (the most
+                        #   natural, about 2 cents a reel; its free plan doesn't allow earning money with the voice)
+                        # Free voices on this PC (downloaded once, about 85 MB): norman, john, bryce (male), kristin (female)
+                        #   system = the computer's own voice | any Piper voice name, e.g. en_GB-alan-medium
+                        # If an AI voice fails (no internet, the free daily limit used up), Norman reads that reel.
   speed: 1.1            # how fast the voice talks (1 = normal)
   persona: ''           # who you are / your angle, so the AI's takes sound like you, e.g. "a skeptical engineer"
   max_seconds: 20       # at most this much AI voiceover per reel
   caption_color: "#7FDBFF"  # the voiceover's captions, so viewers can tell it apart from the clip
+  style: ''             # Google voices: how to read it, e.g. "calm and serious". '' = like a podcast host reacting to a clip
+  gemini_model: gemini-3.8-flash-tts   # gemini-3.8-flash-lite-tts = cheaper, a little less natural
+  elevenlabs_model: eleven_v4          # eleven_flash_v2_5 = half the price
 
 links:
   # Put video links (YouTube, TikTok, Instagram, X...) in a links.txt file inside a clips folder, one per line,

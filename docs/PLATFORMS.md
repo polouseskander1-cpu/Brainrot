@@ -96,6 +96,18 @@ Where the words come from, best first:
    template. The phone message for each reel shows what it says: with `phone.approval` on, check it
    before it's posted.
 
+**Which voice reads it** (menu > Look & features > Commentary voiceover > Voice):
+
+| Voice | Sounds | Cost | Notes |
+|---|---|---|---|
+| Google Gemini (`gemini:Puck`...) | Very natural; among the three best in [blind listening tests](https://artificialanalysis.ai/text-to-speech/leaderboard) | Free for about 100 lines (50 reels) a day; then about $0.003 a reel | A free key from [Google AI Studio](https://aistudio.google.com/apikey). On the free tier Google may use what's sent to improve its products. In the EU, the UK and Switzerland, Google's [terms](https://ai.google.dev/gemini-api/terms) allow only the paid tier |
+| ElevenLabs (`elevenlabs:<voice id>`) | The most natural | About 2 cents a reel | Its free plan doesn't allow earning money with the voice and asks for credit to ElevenLabs: monetized reels need a paid plan (Starter, about $6 a month) |
+| Norman, John, Bryce, Kristin | Good, a little flat | Free, offline | Runs on your PC; also steps in whenever an AI voice fails |
+
+Every version of a reel (TikTok, YouTube, Instagram, Facebook) shares one voiceover, so it's paid for
+once. Google's voices read any language; the free ones only English (other languages use your
+computer's own voice).
+
 Honestly: a computer voice reading an AI's take is better than a bare repost, but it isn't a guarantee.
 YouTube's [inauthentic content rule](https://support.google.com/youtube/answer/1311392) also names
 "AI-generated content made with generic or unoriginal templates giving the impression of mass

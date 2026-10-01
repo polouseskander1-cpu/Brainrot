@@ -43,13 +43,15 @@ class FakeVoice:
 
     def __init__(self):
         self.said = []
+        self.last_engine = ""
 
-    def speak(self, text, language, out):
+    def speak(self, text, language, out, local=False):
         self.said.append(text)
+        self.last_engine = "piper"
         ffmpeg("-f", "lavfi", "-i", f"sine=f=440:d={0.3 * len(text.split()):.2f}", "-ar", "22050", "-ac", "1", str(out))
         return out
 
-    def describe(self, language=""):
+    def describe(self, language="", engine=""):
         return "a test voice"
 
 

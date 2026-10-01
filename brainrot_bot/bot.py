@@ -190,7 +190,8 @@ class Bot:
         self.stop_event = threading.Event()
         self.credentials = Credentials(cfg.paths.credentials)
         self.ai = AI(cfg, self.credentials)
-        self.voice = Voice(cfg.commentary.voice, cfg.commentary.speed, tools, MODELS_DIR, self.should_stop)
+        self.voice = Voice(cfg.commentary.voice, cfg.commentary.speed, tools, MODELS_DIR, self.should_stop,
+                           credentials=self.credentials, settings=cfg.commentary)
         self.commentator = Commentator(cfg, tools, self.ai, self.voice, self._hear, self.should_stop)
         # Test renders (--clip) are never posted, and don't download links.
         self.uploads = UploadQueue(cfg, self.state, self.credentials, self._save) if persist else None

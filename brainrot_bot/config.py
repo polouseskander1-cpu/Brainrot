@@ -166,6 +166,9 @@ DEFAULTS: dict[str, Any] = {
         "persona": "",
         "max_seconds": 20,
         "caption_color": "#7FDBFF",
+        "style": "",
+        "gemini_model": "gemini-3.8-flash-tts",
+        "elevenlabs_model": "eleven_v4",
     },
     "links": {
         "enabled": True,
@@ -427,14 +430,25 @@ def _validate(c: dict) -> None:
     cm = c["commentary"]
     for key in ("enabled", "intro", "outro"):
         cm[key] = bool(cm[key])
+    from .aivoice import GEMINI, GEMINI_VOICES, parse
     from .voice import VOICES, valid_voice
 
     cm["voice"] = str(cm["voice"] or "").strip()
     if cm["voice"].lower() in (*VOICES, "system"):
         cm["voice"] = cm["voice"].lower()
+    ai_voice = parse(cm["voice"])
+    if ai_voice:  # gemini:puck -> gemini:Puck
+        provider, name = ai_voice
+        name = next((v for v in GEMINI_VOICES if v.lower() == name.lower()), name) if provider == GEMINI else name
+        cm["voice"] = f"{provider}:{name}"
     if not valid_voice(cm["voice"]):
-        raise ConfigError(f"'commentary.voice' must be {', '.join(VOICES)}, system, or a Piper voice name like "
-                          f"en_GB-alan-medium (got {cm['voice']!r})")
+        raise ConfigError(f"'commentary.voice' must be {', '.join(VOICES)}, system, a Piper voice name like en_GB-alan-medium, "
+                          f"gemini:<voice> (e.g. gemini:Puck) or elevenlabs:<voice id> (got {cm['voice']!r})")
+    cm["style"] = " ".join(str(cm["style"] or "").split())[:500]
+    for key in ("gemini_model", "elevenlabs_model"):
+        cm[key] = str(cm[key] or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", cm[key]):
+            raise ConfigError(f"'commentary.{key}' must be a model name like {DEFAULTS['commentary'][key]} (got {cm[key]!r})")
     cm["speed"] = _num("commentary.speed", cm["speed"], 0.5, 2.0)
     cm["persona"] = " ".join(str(cm["persona"] or "").split())[:500]
     cm["max_seconds"] = _num("commentary.max_seconds", cm["max_seconds"], 3, 120)

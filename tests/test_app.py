@@ -294,8 +294,8 @@ def test_look_menu_sets_versions_and_reels_per_episode(config, monkeypatch):
 def test_look_menu_sets_the_voiceover(config, monkeypatch):
     from brainrot_bot.wizard import choose_look
 
-    # voice: Kristin; your angle; no line before the clip; then off
-    typed(monkeypatch, "14", "2", "4", "14", "3", "a skeptical engineer", "14", "4", "14", "1", "0")
+    # voice: Kristin (after the two AI voices); your angle; no line before the clip; then off
+    typed(monkeypatch, "14", "2", "6", "14", "3", "a skeptical engineer", "14", "4", "14", "1", "0")
     choose_look(load_config(config), config)
     c = load_config(config).commentary
     assert (c.voice, c.persona, c.intro, c.outro, c.enabled) == ("kristin", "a skeptical engineer", False, True, False)

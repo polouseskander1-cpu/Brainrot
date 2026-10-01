@@ -52,6 +52,7 @@ class Line:
     length: float  # seconds of sound
     words: list[Word] = field(default_factory=list)  # when each word is said, from the start of the sound
     own_voice: bool = False
+    engine: str = ""  # the voice that read it: gemini, elevenlabs, piper or system ("" = your recording)
 
     @property
     def pause(self) -> float:
@@ -174,6 +175,7 @@ def align_words(text: str, heard: list[Word], length: float) -> list[Word]:
     tokens = text.split()
     if not tokens:
         return []
+    heard = [Word(w.text, w.start, min(w.end, length)) for w in heard if w.start < length - 0.02]
     if not heard:
         return _spread(tokens, 0.05, max(0.1, length - 0.1))
     times: list[tuple[float, float] | None] = [None] * len(tokens)
@@ -197,6 +199,9 @@ def align_words(text: str, heard: list[Word], length: float) -> list[Word]:
         start = words[-1].end if words else max(0.0, min(heard[0].start, end - 0.3 * (j - i)))
         words += _spread(tokens[i:j], start, max(end, start + 0.05 * (j - i)))
         i = j
+    if words and words[-1].end > length:  # never longer than the sound itself
+        scale = length / words[-1].end
+        words = [Word(w.text, w.start * scale, w.end * scale) for w in words]
     return words
 
 
@@ -253,10 +258,12 @@ class Commentator:
                 lines.append(self._say(where, texts[where], language, work / f"voice{tag}_{where}"))
         if origin == "the AI":
             lines = self._fit(lines, language, work, tag)
+        lines = self._one_voice(lines, language, work, tag)
         lines = [x for x in lines if x.length > 0.2]
         if not lines:
             return None
-        who = "your own voice" if all(x.own_voice for x in lines) else f"voice: {self.voice.describe(language)}"
+        read = next((x.engine for x in lines if x.engine), "")
+        who = "your own voice" if not read else f"voice: {self.voice.describe(language, read)}"
         log.info("Voiceover (%s, %s): %s", origin, who,
                  "; ".join(f"{'before' if x.where == 'intro' else 'after'} the clip \"{x.text}\" ({x.length:.1f}s)" for x in lines))
         return Voiceover(lines, origin)
@@ -290,11 +297,21 @@ class Commentator:
         text = " ".join(w.text for w in heard)
         return Line(where, text, out, length, heard, own_voice=True)
 
-    def _say(self, where: str, text: str, language: str, base: Path) -> Line:
-        raw = self.voice.speak(text, language, base.with_name(base.name + "_raw.wav"))
+    def _say(self, where: str, text: str, language: str, base: Path, local: bool = False) -> Line:
+        raw = self.voice.speak(text, language, base.with_name(base.name + "_raw.wav"), local=local)
         out = base.with_suffix(".wav")
         length = prepare_audio(self.tools, raw, out, self.should_stop)
-        return Line(where, text, out, length, align_words(text, self._heard(out), length))
+        return Line(where, text, out, length, align_words(text, self._heard(out), length),
+                    engine=getattr(self.voice, "last_engine", "") or "piper")
+
+    def _one_voice(self, lines: list[Line], language: str, work: Path, tag: str) -> list[Line]:
+        """If the AI voice stopped working halfway (its daily limit, say), the free voice reads the whole reel:
+        two different voices in one reel would sound odd."""
+        read = {x.engine for x in lines if x.engine}
+        if len(read) < 2:
+            return lines
+        return [self._say(x.where, x.text, language, work / f"voice{tag}_{x.where}", local=True)
+                if x.engine in ("gemini", "elevenlabs") else x for x in lines]
 
     def _fit(self, lines: list[Line], language: str, work: Path, tag: str) -> list[Line]:
         """At most commentary.max_seconds of the AI's voiceover: the take loses its middle sentences first

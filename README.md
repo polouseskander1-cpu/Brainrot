@@ -93,9 +93,14 @@ don't pay for plain reposts; see [Getting paid](docs/PLATFORMS.md#getting-paid-w
 - **Your own words come first**: record yourself as `<clip>.outro.mp3` (and `<clip>.intro.mp3`) next to
   the clip, or write your take in `<clip>.commentary.txt` and the voice reads it. Otherwise the **AI
   helper** writes a take for each reel; tell it your angle in the menu ("a skeptical engineer...").
-- A **natural voice** that runs on your PC (free, offline, about 85 MB downloaded the first time):
-  Norman, John or Bryce (male) or Kristin (female). The reel stays the right length for each platform:
-  the voiceover counts towards TikTok's minute and YouTube's 59 seconds.
+- **AI voices that sound like a real person**: Google's Gemini voices (the best value: free for about 50
+  reels a day, then about $0.003 a reel) or ElevenLabs (the most natural, about 2 cents a reel). Connect
+  one in the menu (Look & features > Commentary voiceover > Voice). Or a **free voice on your PC**
+  (offline, about 85 MB downloaded the first time): Norman, John or Bryce (male) or Kristin (female).
+  If an AI voice fails or its free daily limit runs out, the free voice reads that reel.
+- **One voiceover per reel**: its TikTok, YouTube, Instagram and Facebook versions share it, so you pay
+  for it once. The reel stays the right length for each platform: the voiceover counts towards TikTok's
+  minute and YouTube's 59 seconds.
 - The phone message for each reel shows what the voiceover says, so you can check it before it's posted.
 
 **Editing**
@@ -195,7 +200,7 @@ choose *Stop the bot* then *Start the bot*. Some useful ones:
 | `moments.count` | `0` | Reels per long video. `0` = about one per 20 minutes (6 from 2 hours). |
 | `versions.tiktok` / `youtube` / ... | `61-90` / `3-59` / ... | Length of each platform's version, in seconds. `versions.enabled: false` = one version in `Reels\<podcast>\`. |
 | `commentary.enabled` | on | The voiceover before and after each clip (needs the AI helper, or your own words or recording). |
-| `commentary.voice` | `norman` | `john`, `bryce`, `kristin`, `system` (the computer's voice) or any [Piper voice](https://huggingface.co/rhasspy/piper-voices). |
+| `commentary.voice` | `norman` | AI voices: `gemini:Puck` (or another Google voice), `elevenlabs:<voice id>`. Free: `john`, `bryce`, `kristin`, `system` or any [Piper voice](https://huggingface.co/rhasspy/piper-voices). |
 | `commentary.persona` | empty | Your angle, so the AI's takes sound like you. |
 | `upload.post_times` | `auto` | `["12:00", "18:30"]` = only then, `[]` = any time. |
 | `upload.hours_between_posts` | `3` | At least this long between posts on the same account. |

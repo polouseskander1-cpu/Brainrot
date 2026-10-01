@@ -431,7 +431,7 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
                 f"{FOLDERS[p]} {lo:g}-{hi:g}s" for p, (lo, hi) in version_ranges(cfg).items()) + ")" if cfg.versions.enabled else "")),
             ("Reels per long video (podcast episode)", str(cfg.moments.count) if cfg.moments.count else "automatic, about 1 per 20 minutes"),
             ("Commentary voiceover (your take, so clips count as original)",
-             on(cfg.commentary.enabled) + (f" (voice: {cfg.commentary.voice})" if cfg.commentary.enabled else "")),
+             on(cfg.commentary.enabled) + (f" (voice: {voice_label(cfg.commentary.voice)})" if cfg.commentary.enabled else "")),
         ]
         for number, (name, value) in enumerate(items, 1):
             ui.say(f"  {ui.yellow(str(number))}) {name}: {value}")
@@ -484,25 +484,34 @@ def choose_look(cfg: SimpleNamespace, config_path: Path) -> None:
                 update_config_file(config_path, {"moments": {"count": int(answer)}})
 
 
+def voice_label(setting: str) -> str:
+    """'gemini:Puck' -> 'Puck (Google Gemini AI voice)'."""
+    from .aivoice import ELEVENLABS_DEFAULT, NAMES, parse
+
+    ai_voice = parse(setting)
+    if not ai_voice:
+        return setting
+    provider, voice = ai_voice
+    shown = ELEVENLABS_DEFAULT[1] if voice == ELEVENLABS_DEFAULT[0] else voice
+    return f"{shown} ({NAMES[provider]} AI voice)"
+
+
 def choose_commentary(cfg: SimpleNamespace, config_path: Path) -> None:
     """Menu: the voiceover said around each clip (commentary: in config.yaml)."""
-    from .voice import DESCRIPTIONS, VOICES
-
     c = cfg.commentary
     ui.say("A voiceover with a take on each clip - a line before it and your take after it - so reposted clips add")
     ui.say("something original. The AI helper writes it, unless you do: put your words in <clip>.commentary.txt, or")
     ui.say("record yourself as <clip>.outro.mp3 (and <clip>.intro.mp3) next to the clip.")
-    options = ["Turn it off" if c.enabled else "Turn it on", f"Voice: {c.voice}", f"Your angle: {c.persona or 'not set'}",
+    options = ["Turn it off" if c.enabled else "Turn it on", f"Voice: {voice_label(c.voice)}", f"Your angle: {c.persona or 'not set'}",
                f"A line before the clip: {'on' if c.intro else 'off'}", f"Your take after the clip: {'on' if c.outro else 'off'}",
                "Back"]
     picked = ui.choose(options, default=len(options))
     if picked == 1:
         update_config_file(config_path, {"commentary": {"enabled": not c.enabled}})
     elif picked == 2:
-        names = [*VOICES, "system"]
-        voice = names[ui.choose([f"{name.title()} ({DESCRIPTIONS[name]})" for name in names],
-                                default=names.index(c.voice) + 1 if c.voice in names else 1) - 1]
-        update_config_file(config_path, {"commentary": {"voice": voice}})
+        voice = choose_voice(cfg, Credentials(cfg.paths.credentials))
+        if voice:
+            update_config_file(config_path, {"commentary": {"voice": voice}})
     elif picked == 3:
         ui.say('Who you are, or your angle, so the takes sound like you: e.g. "a skeptical engineer who loves space".')
         ui.say("Enter keeps it, a dash (-) clears it.")
@@ -511,6 +520,91 @@ def choose_commentary(cfg: SimpleNamespace, config_path: Path) -> None:
     elif picked in (4, 5):
         key = "intro" if picked == 4 else "outro"
         update_config_file(config_path, {"commentary": {key: not getattr(c, key)}})
+
+
+def choose_voice(cfg: SimpleNamespace, creds: Credentials) -> str:
+    """Menu: who reads the voiceover. Returns the commentary.voice setting ('' = unchanged)."""
+    from .aivoice import ELEVENLABS, GEMINI
+    from .voice import DESCRIPTIONS, VOICES
+
+    current = cfg.commentary.voice
+    local = [*VOICES, "system"]
+    ui.say("AI voices sound like a real person. The free voices run on this PC and cost nothing.")
+    picked = ui.choose([
+        "Google Gemini AI voice: very natural, the best value. Free for about 50 reels a day, then about $0.003 a reel",
+        "ElevenLabs AI voice: the most natural. About 2 cents a reel; earning money with it needs a paid plan (from about $6/month)",
+        *[f"{name.title()} ({DESCRIPTIONS[name]}): free, on this PC" for name in VOICES],
+        "The computer's own voice: free",
+    ], default=1 if current.startswith(GEMINI) else 2 if current.startswith(ELEVENLABS)
+        else local.index(current) + 3 if current in local else 3)
+    if picked == 1:
+        return _gemini_voice(cfg, creds)
+    if picked == 2:
+        return _elevenlabs_voice(cfg, creds)
+    return local[picked - 3]
+
+
+def _ai_voice_key(provider: str, creds: Credentials, steps: list[str], check) -> bool:
+    """A working key for the AI voice: the connected one, or a new one pasted here. check(key) -> problem."""
+    from .aivoice import NAMES, api_key
+
+    if api_key(provider, creds) and ui.ask_yes_no(f"Use the {NAMES[provider]} key you connected before?", default=True):
+        return True
+    _instructions(steps)
+    while True:
+        key = ui.ask(f"Paste the {NAMES[provider]} key, or 'skip'").strip()
+        if _skip(key):
+            return False
+        problem = check(key)
+        if not problem:
+            creds.set(provider, {"api_key": key, "account": NAMES[provider]})
+            ui.say(ui.green(f"  {NAMES[provider]} voice connected."))
+            return True
+        ui.say(ui.red(f"  That didn't work: {problem}"))
+        if not ui.ask_yes_no("  Try again?", default=True):
+            return False
+
+
+def _gemini_voice(cfg: SimpleNamespace, creds: Credentials) -> str:
+    from .aivoice import GEMINI, GEMINI_VOICES, KEY_PAGES, check_gemini_key, parse
+
+    if not _ai_voice_key(GEMINI, creds, [
+        "Google Gemini voice: a free key from Google AI Studio (no card needed for the free tier).",
+        f"  1. Open {KEY_PAGES[GEMINI]} and sign in with a Google account",
+        "  2. Create API key, then copy it",
+        "  In the EU, the UK and Switzerland Google only allows the paid tier: turn on billing there (about $0.003 a reel).",
+    ], lambda key: check_gemini_key(key, cfg.commentary.gemini_model)):
+        return ""
+    names = list(GEMINI_VOICES)
+    now = parse(cfg.commentary.voice)
+    ui.say("Which voice? (Hear all 30 of Google's voices at aistudio.google.com > Generate speech.)")
+    picked = ui.choose([f"{name} ({GEMINI_VOICES[name]})" for name in names],
+                       default=names.index(now[1]) + 1 if now and now[1] in names else 1)
+    return f"{GEMINI}:{names[picked - 1]}"
+
+
+def _elevenlabs_voice(cfg: SimpleNamespace, creds: Credentials) -> str:
+    from .aivoice import ELEVENLABS, ELEVENLABS_DEFAULT, KEY_PAGES, api_key, elevenlabs_voices
+
+    if not _ai_voice_key(ELEVENLABS, creds, [
+        "ElevenLabs: the most natural AI voices. Its free plan doesn't allow earning money with them (and asks for",
+        "credit to ElevenLabs); the Starter plan (about $6 a month) does.",
+        f"  1. Open {KEY_PAGES[ELEVENLABS]} and sign in",
+        "  2. Create API key (allow Text to Speech, and Voices: read), then copy it",
+    ], lambda key: elevenlabs_voices(key)[0]):
+        return ""
+    problem, voices = elevenlabs_voices(api_key(ELEVENLABS, creds))
+    if problem or not voices:
+        ui.say(f"  Couldn't list your voices ({problem or 'none found'}); using {ELEVENLABS_DEFAULT[1]}.")
+        return f"{ELEVENLABS}:{ELEVENLABS_DEFAULT[0]}"
+    voices = voices[:25]
+    ui.say("Which voice? (Add more in ElevenLabs' Voice Library, then pick them here.)")
+    picked = ui.choose([f"{v['name']}" + (f" ({v['about']})" if v["about"] else "") for v in voices] + ["Type a voice ID"],
+                       default=next((i for i, v in enumerate(voices, 1) if v["id"] == ELEVENLABS_DEFAULT[0]), 1))
+    if picked <= len(voices):
+        return f"{ELEVENLABS}:{voices[picked - 1]['id']}"
+    voice_id = ui.ask("Voice ID (from the voice's page on elevenlabs.io)").strip()
+    return f"{ELEVENLABS}:{voice_id}" if voice_id.isalnum() and 10 <= len(voice_id) <= 40 else ""
 
 
 def add_video_link(cfg: SimpleNamespace) -> None:

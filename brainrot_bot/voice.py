@@ -1,6 +1,7 @@
 """The voice that reads the commentary.
 
-Piper (github.com/rhasspy/piper) is a natural-sounding voice that runs offline. The program (about 25 MB)
+An AI voice from the cloud (Google Gemini or ElevenLabs, see aivoice.py) when its key is connected, or
+Piper (github.com/rhasspy/piper), a natural-sounding voice that runs offline and costs nothing. The program (about 25 MB)
 and a voice (about 60 MB) are downloaded once into the models folder, like the speech model, and checked
 against the checksums below. The built-in voices were trained on public-domain recordings, so reels made
 with them can be monetized. Macs (Piper's Mac build is broken) and languages without a Piper voice use
@@ -26,6 +27,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+from . import aivoice
 from .config import MODELS_DIR
 from .media import StopRequested, Tools, popen_kwargs
 
@@ -52,6 +54,7 @@ VOICES = {
 }
 DESCRIPTIONS = {"norman": "male", "john": "male, deeper", "bryce": "male, younger", "kristin": "female",
                 "system": "the computer's own voice"}
+LOCAL_DEFAULT = "norman"  # the free voice that reads when an AI voice can't
 PIPER_VOICE_RE = re.compile(r"^([a-z]{2,3})_([A-Z]{2})-([A-Za-z0-9_]+)-(x_low|low|medium|high)$")
 # The Microsoft C++ runtime piper.exe needs. Most PCs have it; the app carries a copy for those that don't.
 WINDOWS_RUNTIME = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
@@ -78,7 +81,7 @@ class VoiceError(Exception):
 
 
 def valid_voice(name: str) -> bool:
-    return name in VOICES or name == "system" or bool(PIPER_VOICE_RE.match(name))
+    return name in VOICES or name == "system" or bool(PIPER_VOICE_RE.match(name)) or aivoice.valid(name)
 
 
 def piper_build(system: str = "", machine: str = "") -> str:
@@ -177,43 +180,79 @@ def _copy_windows_runtime(folder: Path) -> None:
 
 
 class Voice:
-    """Says text into a WAV file with the voice from commentary.voice (downloaded the first time)."""
+    """Says text into a sound file with the voice from commentary.voice: an AI voice when its key is
+    connected, otherwise (or when it fails) the free voice on this PC, downloaded the first time."""
 
     def __init__(self, name: str, speed: float, tools: Tools, folder: Path = MODELS_DIR,
-                 should_stop: Callable[[], bool] | None = None):
+                 should_stop: Callable[[], bool] | None = None, credentials=None, settings=None):
         self.name = name
+        self.cloud = aivoice.parse(name)  # (provider, voice) for an AI voice
+        self.local = LOCAL_DEFAULT if self.cloud else name  # the voice on this PC
         self.speed = speed
         self.tools = tools
         self.folder = folder
         self.should_stop = should_stop
+        self.credentials = credentials
+        self.settings = settings  # the commentary settings (the AI voices' style and models)
+        self.last_engine = ""  # what said the last line: gemini, elevenlabs, piper or system
         self._piper_broken = ""  # why Piper can't run here (then the computer's voice is used)
         self._download_failed = 0.0  # when the last download failed (tried again an hour later)
+        self._cloud_paused_until = 0.0  # after a failed AI voice request
 
     # ------------------------------------------------------------------ what speaks
 
+    def cloud_ready(self) -> bool:
+        return (self.cloud is not None and time.time() >= self._cloud_paused_until
+                and bool(aivoice.api_key(self.cloud[0], self.credentials)))
+
     def engine_for(self, language: str) -> str:
-        """'piper' or 'system' for a reel in this language ('' = unknown)."""
+        """'gemini', 'elevenlabs', 'piper' or 'system' for a reel in this language ('' = unknown)."""
+        if self.cloud_ready():
+            return self.cloud[0]  # the AI voices speak every language
+        return self._local_engine(language)
+
+    def _local_engine(self, language: str) -> str:
+        """'piper' or 'system': the voice on this PC."""
         lang = (language or "").lower().split("-")[0].split("_")[0]
-        if self.name == "system" or not piper_build() or self._piper_broken:
+        if self.local == "system" or not piper_build() or self._piper_broken:
             return "system"
         if self._download_failed and time.time() - self._download_failed < 3600 and not self.piper_ready():
             return "system"
-        if lang and lang != voice_language(self.name):
+        if lang and lang != voice_language(self.local):
             return "system"  # e.g. a Spanish clip with the English voice
         return "piper"
 
-    def describe(self, language: str = "") -> str:
-        if self.engine_for(language) == "piper":
-            return f"{self.name} ({DESCRIPTIONS.get(self.name, 'Piper voice')})"
+    def describe(self, language: str = "", engine: str = "") -> str:
+        engine = engine or self.engine_for(language)
+        if engine == aivoice.GEMINI:
+            about = aivoice.GEMINI_VOICES.get(self.cloud[1])
+            return f"{self.cloud[1]}{f' ({about})' if about else ''}, Google Gemini AI voice"
+        if engine == aivoice.ELEVENLABS:
+            default_id, default_name = aivoice.ELEVENLABS_DEFAULT
+            return f"{default_name if self.cloud[1] == default_id else 'your voice ' + self.cloud[1]}, ElevenLabs AI voice"
+        if engine == "piper":
+            return f"{self.local} ({DESCRIPTIONS.get(self.local, 'Piper voice')})"
         return "the computer's own voice"
 
-    def speak(self, text: str, language: str, out: Path) -> Path:
-        """Say text into out (a WAV file). Raises VoiceError if no voice can say it."""
+    def speak(self, text: str, language: str, out: Path, local: bool = False) -> Path:
+        """Say text into out (a sound file; the returned path may have another extension). local: skip the AI
+        voice. Raises VoiceError if no voice can say it."""
         text = " ".join(text.split())
         if not text:
             raise VoiceError("nothing to say")
         out.parent.mkdir(parents=True, exist_ok=True)
-        if self.engine_for(language) == "piper":
+        engine = "" if local else self.engine_for(language)
+        if engine in (aivoice.GEMINI, aivoice.ELEVENLABS):
+            try:
+                path = self._cloud(engine, text, out)
+                self.last_engine = engine
+                return path
+            except aivoice.AIVoiceError as exc:
+                self._cloud_paused_until = time.time() + exc.wait
+                log.warning("The AI voice didn't work: %s. The free voice on this PC reads instead (the AI voice is "
+                            "tried again in %d minutes).", exc, round(exc.wait / 60))
+        self.last_engine = self._local_engine(language)
+        if self.last_engine == "piper":
             try:
                 exe, model = self._install_piper(), self._install_voice()
             except StopRequested:
@@ -227,13 +266,23 @@ class Voice:
                 except (OSError, subprocess.SubprocessError, VoiceError) as exc:
                     self._piper_broken = str(exc)
                     log.warning("The natural voice couldn't start (%s); using the computer's own voice instead.", exc)
+        self.last_engine = "system"
         return self._system(text, language, out)
+
+    def _cloud(self, provider: str, text: str, out: Path) -> Path:
+        key = aivoice.api_key(provider, self.credentials)
+        s = self.settings
+        if provider == aivoice.GEMINI:
+            return aivoice.gemini_speak(key, self.cloud[1], text, out, model=getattr(s, "gemini_model", aivoice.GEMINI_MODEL),
+                                        style=getattr(s, "style", "") or aivoice.STYLE)
+        return aivoice.elevenlabs_speak(key, self.cloud[1], text, out, speed=self.speed,
+                                        model=getattr(s, "elevenlabs_model", aivoice.ELEVENLABS_MODEL))
 
     # ------------------------------------------------------------------ Piper
 
     def piper_ready(self) -> bool:
         build = piper_build()
-        return bool(build) and self._piper_exe(build).is_file() and (self.name not in VOICES or self._voice_files()[0].is_file())
+        return bool(build) and self._piper_exe(build).is_file() and (self.local not in VOICES or self._voice_files()[0].is_file())
 
     def _piper_exe(self, build: str) -> Path:
         return self.folder / "piper" / build / "piper" / ("piper.exe" if os.name == "nt" else "piper")
@@ -264,7 +313,7 @@ class Voice:
         return exe
 
     def _voice_files(self) -> tuple[Path, Path]:
-        voice = VOICES[self.name][0] if self.name in VOICES else self.name
+        voice = VOICES[self.local][0] if self.local in VOICES else self.local
         base = self.folder / "voices" / voice
         return base.with_suffix(".onnx"), base.with_name(voice + ".onnx.json")
 
@@ -272,11 +321,11 @@ class Voice:
         model, settings = self._voice_files()
         if model.is_file() and settings.is_file():
             return model
-        if self.name in VOICES:
-            voice, model_sha, settings_sha = VOICES[self.name]
+        if self.local in VOICES:
+            voice, model_sha, settings_sha = VOICES[self.local]
             base = VOICES_URL.format(revision=VOICES_REVISION)
         else:
-            voice, model_sha, settings_sha = self.name, "", ""
+            voice, model_sha, settings_sha = self.local, "", ""
             base = VOICES_URL.format(revision="main")
         lang_region, speaker, quality = voice.split("-")
         url = f"{base}{lang_region.split('_')[0]}/{lang_region}/{speaker}/{quality}/{voice}"

@@ -140,6 +140,7 @@ Rules:
 - Be accurate. Only state a fact if you're sure it's true; otherwise give your opinion and say it as an opinion.
 - Talk about the clip's main point rather than a detail from one sentence: your words may also be used around a shorter part of the clip.
 - Don't name the speaker unless the transcript makes clear who it is.
+- Sound like a real person talking to a friend, not like an AI or an announcer: contractions, everyday words, short sentences and one specific point. No filler or stock phrases like "here's the thing", "let's dive in", "buckle up", "game-changer", "mind-blowing", "the truth is" or "it's worth noting".
 - Plain spoken words only: no hashtags, emojis, stage directions, quotation marks or brackets."""
 
 COMMENTARY_ASKS = {

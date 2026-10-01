@@ -25,9 +25,10 @@ BRAINROT BOT - quick start (Windows)
    You can also add a YouTube / TikTok link from the menu or from your phone.
 
 5. Commentary voiceover (so reposted clips count as original): the clip pauses for a line before it
-   and a take after it, read by a natural voice (downloaded once, about 85 MB). The AI helper writes
-   the take, or use your own: a recording saved next to the clip as <clip>.outro.mp3, or your words
-   in <clip>.commentary.txt. Menu > Look & features > Commentary voiceover.
+   and a take after it. The AI helper writes the take, or use your own: a recording saved next to the
+   clip as <clip>.outro.mp3, or your words in <clip>.commentary.txt. It's read by an AI voice that
+   sounds like a real person (Google Gemini: free for about 50 reels a day; or ElevenLabs), or by a
+   free voice on your PC. Menu > Look & features > Commentary voiceover > Voice.
 
 Double-click BrainrotBot.exe again at any time for the menu: what the bot is doing, the folders,
 add a video link, the phone dashboard (scan its QR code on the same Wi-Fi), stats, look & features,
