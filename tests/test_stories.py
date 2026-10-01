@@ -526,3 +526,25 @@ def test_discord_story_reactions(monkeypatch, tmp_path):
     assert phone.actions.get_nowait() == Action("story", story="abc123", choice="ai", style="anime")
     assert phone.actions.get_nowait() == Action("idea", text="a cursed clock")
     assert phone.memory["discord_stories"] == {} and phone.story_memory("abc123") is None
+
+
+def test_story_files_move_to_another_drive(tmp_path, monkeypatch):
+    """The work folder and the stories folder can be on different drives (Windows can't rename across them)."""
+    import os
+
+    from brainrot_bot.stories import studio
+
+    src, dest = tmp_path / "narration.wav", tmp_path / "stories" / "narration.wav"
+    src.write_bytes(b"RIFF" * 100)
+    dest.parent.mkdir()
+    real, calls = os.replace, []
+
+    def replace(a, b):
+        calls.append(a)
+        if len(calls) == 1:
+            raise OSError(17, "The system cannot move the file to a different disk drive")
+        real(a, b)
+
+    monkeypatch.setattr(studio.os, "replace", replace)
+    studio._move(src, dest)
+    assert dest.read_bytes() == b"RIFF" * 100 and not src.exists() and not list(dest.parent.glob("*.partial"))

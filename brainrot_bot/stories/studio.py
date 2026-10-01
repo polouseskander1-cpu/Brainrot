@@ -17,8 +17,10 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import os
 import re
 import secrets
+import shutil
 import threading
 import time
 from dataclasses import dataclass
@@ -496,7 +498,7 @@ class Studio:
         log.info("Reading the story aloud (voice: %s)...", self.voice.describe(s.language))
         narration = narrate(self.voice, self.tools, script, s.language, work, self.bot.hear, MAX_SECONDS,
                             self.cfg.video.fps, self.bot.should_stop, min_seconds=MINUTE if s.seconds >= MINUTE else 0.0)
-        narration.audio.replace(saved)
+        _move(narration.audio, saved)
         narration.audio = saved
         timing.write_text(json.dumps({"length": narration.length, "cuts": narration.cuts, "engine": narration.engine,
                                       "words": [[w.text, w.start, w.end] for w in narration.words]}), encoding="utf-8")
@@ -692,6 +694,17 @@ class Studio:
     def _shot_info(self, path: Path) -> tuple[Path, float, bool]:
         info = probe(self.tools, path)
         return path, info.duration, info.has_audio
+
+
+def _move(src: Path, dest: Path) -> None:
+    """Move a file, also to another drive (the work folder and the stories folder can be on different ones)."""
+    try:
+        os.replace(src, dest)
+    except OSError:
+        partial = dest.with_name(dest.name + ".partial")
+        shutil.copyfile(src, partial)
+        os.replace(partial, dest)
+        src.unlink(missing_ok=True)
 
 
 def _clear(folder: Path, narration: bool) -> None:
