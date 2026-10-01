@@ -199,6 +199,23 @@ class Loudness:
             return True
         return self.level(start, end) < 0.35 * self.median
 
+    def loud_runs(self, start: float, end: float, min_length: float = 0.25, join: float = 0.3) -> list[tuple[float, float]]:
+        """The stretches of start-end as loud as talk (laughter, a reaction), at least min_length long. A click
+        or a breath is too short to count, so a long silence with one in it is still a silence."""
+        if not self.levels or self.median <= 0 or end <= start:
+            return []
+        threshold = 0.35 * self.median
+        runs: list[list[float]] = []
+        for i in range(max(0, int(start / self.HOP)), min(len(self.levels), int(math.ceil(end / self.HOP)))):
+            if self.levels[i] < threshold:
+                continue
+            t0, t1 = i * self.HOP, (i + 1) * self.HOP
+            if runs and t0 - runs[-1][1] <= join:
+                runs[-1][1] = t1
+            else:
+                runs.append([t0, t1])
+        return [(max(start, a), min(end, b)) for a, b in runs if min(end, b) - max(start, a) >= min_length]
+
     def boost(self, start: float, end: float) -> float:
         """How much louder than usual this moment is (0 = normal)."""
         if not self.levels or self.median <= 0:
@@ -224,15 +241,17 @@ def speech_intervals(
     loudness: Loudness | None = None,
 ) -> list[tuple[float, float]]:
     """Parts of [start, end) to keep so that pauses longer than max_pause shrink to ~2*pad.
-    Leading/trailing silence is trimmed too. Gaps with laughter or other loud sound are kept."""
+    Leading/trailing silence is trimmed too. Laughter or other loud sound inside a pause is kept; only the
+    quiet around it goes (a call's long delay with a click in it is still cut)."""
     inside = [w for w in words if w.start >= start and w.end <= end + 0.5]
     if not inside:
         return [(quantize(start, fps), quantize(end, fps))]
     keep: list[list[float]] = [[max(start, inside[0].start - pad), min(end, inside[0].end + pad)]]
     for prev, word in zip(inside, inside[1:]):
         gap_start, gap_end = prev.end, word.start
-        quiet = loudness is None or loudness.is_quiet(gap_start + pad, gap_end - pad)
-        if gap_end - gap_start > max_pause and quiet:
+        if gap_end - gap_start > max_pause:
+            for a, b in loudness.loud_runs(gap_start + pad, gap_end - pad) if loudness is not None else []:
+                keep.append([max(start, a - pad), min(end, b + pad)])  # the laugh stays, the silence around it goes
             keep.append([max(start, word.start - pad), min(end, word.end + pad)])
         else:
             keep[-1][1] = min(end, word.end + pad)

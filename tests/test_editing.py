@@ -137,6 +137,19 @@ def test_loud_pauses_are_kept():
     assert len(speech_intervals(ws, 0, 6, fps=100, loudness=quiet_gap)) == 2
 
 
+def test_dead_air_with_a_click_in_it_is_still_cut():
+    """A call's 4.5-second delay with one click in it (seen in a real interview from space): cut. A laugh in
+    the middle of a pause: the laugh stays, the silence around it goes."""
+    ws = [Word("Question?", 0.2, 1.0), Word("Answer.", 5.6, 6.2)]
+    talk, hush = [0.1] * 12, [0.002] * 46
+    click = Loudness(talk + hush[:20] + [0.2] + hush[21:] + [0.1] * 10)
+    # 4.5 s of dead air gone, click and all
+    assert speech_intervals(ws, 0, 6.4, fps=100, loudness=click) == pytest.approx([(0.08, 1.12), (5.48, 6.4)])
+    laugh = Loudness(talk + hush[:15] + [0.12] * 10 + hush[25:] + [0.1] * 10)  # 1 s of laughter at 2.7-3.7 s
+    # the laugh stays (with a little air around it), the quiet before and after it is cut
+    assert speech_intervals(ws, 0, 6.4, fps=100, loudness=laugh) == pytest.approx([(0.08, 1.12), (2.58, 3.82), (5.48, 6.4)])
+
+
 def test_intervals_are_frame_exact():
     ws = [Word("a", 1.013, 1.4), Word("c", 4.07, 4.5)]
     for a, b in speech_intervals(ws, 0, 6, fps=30):

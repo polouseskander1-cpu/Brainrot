@@ -130,6 +130,10 @@ def merge_hashtags(*groups) -> str:
 
 def built_in_copy(words: list[Word], title_hint: str, folder: str) -> Copy:
     line = best_line(words)
+    if not line:  # nothing short and punchy: a question that opens the reel still makes a good hook
+        sentences = split_sentences(words)
+        if sentences and sentences[0].words[-1].text.rstrip().endswith("?"):
+            line = opening_line(words, 12)
     tags = topic_tags(words)
     if folder:
         tags.insert(0, hashtag(folder))
